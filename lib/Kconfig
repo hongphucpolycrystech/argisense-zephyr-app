@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Add out-of-tree library Kconfig sources here as they are implemented.
+# Examples:
+# rsource "mqtt_backend/Kconfig"
+# rsource "updatehub_helpers/Kconfig"

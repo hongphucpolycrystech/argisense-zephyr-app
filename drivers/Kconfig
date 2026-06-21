@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Add out-of-tree driver Kconfig sources here as they are implemented.
+# Examples:
+# rsource "sim7600/Kconfig"
+# rsource "mlx90640/Kconfig"
