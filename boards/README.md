@@ -26,3 +26,5 @@ Build the STM32U575RGT6 custom board with:
 ```bat
 py -3.12 -m west build -p always -b argisense_u575rg argisense-zephyr-app
 ```
+
+The board clock tree is configured for a 25 MHz HSE crystal driving PLL1 to produce a 160 MHz system clock.

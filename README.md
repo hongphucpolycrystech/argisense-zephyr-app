@@ -59,6 +59,8 @@ This repository includes an out-of-tree board definition based on `nucleo_u575zi
 boards/argisense/argisense_u575rg
 ```
 
+The custom board uses a 25 MHz HSE crystal and PLL1 to generate a 160 MHz system clock.
+
 Build it with:
 
 ```bat

@@ -82,22 +82,17 @@
 	};
 };
 
-&clk_msis {
+&clk_hse {
 	status = "okay";
-	msi-range = <4>;
-	msi-pll-mode;
-};
-
-&clk_lse {
-	status = "okay";
+	clock-frequency = <DT_FREQ_M(25)>;
 };
 
 &pll1 {
-	div-m = <1>;
-	mul-n = <80>;
+	div-m = <5>;
+	mul-n = <64>;
 	div-q = <2>;
 	div-r = <2>;
-	clocks = <&clk_msis>;
+	clocks = <&clk_hse>;
 	status = "okay";
 };
 
