@@ -75,6 +75,13 @@ set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
 py -3.12 -m west build -p always -b argisense_u575rg -S argisense-u575rg-hsi argisense-zephyr-app
 ```
 
+You can also build from the helper script:
+
+```bat
+argisense-zephyr-app\app\compile.bat
+argisense-zephyr-app\app\compile.bat hsi
+```
+
 The application starts by logging:
 
 ```text
