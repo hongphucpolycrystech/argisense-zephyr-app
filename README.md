@@ -68,6 +68,13 @@ set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
 py -3.12 -m west build -p always -b argisense_u575rg argisense-zephyr-app
 ```
 
+To use the internal HSI 16 MHz oscillator instead of the external 25 MHz HSE crystal:
+
+```bat
+set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
+py -3.12 -m west build -p always -b argisense_u575rg -S argisense-u575rg-hsi argisense-zephyr-app
+```
+
 The application starts by logging:
 
 ```text

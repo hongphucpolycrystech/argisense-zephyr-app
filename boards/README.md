@@ -28,3 +28,9 @@ py -3.12 -m west build -p always -b argisense_u575rg argisense-zephyr-app
 ```
 
 The board clock tree is configured for a 25 MHz HSE crystal driving PLL1 to produce a 160 MHz system clock.
+
+To build the same board from the internal HSI 16 MHz oscillator instead, use the `argisense-u575rg-hsi` snippet:
+
+```bat
+py -3.12 -m west build -p always -b argisense_u575rg -S argisense-u575rg-hsi argisense-zephyr-app
+```

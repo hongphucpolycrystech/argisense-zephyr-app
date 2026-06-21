@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: argisense-u575rg-hsi
+append:
+  EXTRA_DTC_OVERLAY_FILE: argisense_u575rg_hsi.overlay

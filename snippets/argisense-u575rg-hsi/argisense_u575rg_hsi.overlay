@@ -1,0 +1,23 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Use the STM32U575 internal HSI 16 MHz oscillator instead of the
+ * external 25 MHz HSE crystal.
+ */
+
+&clk_hse {
+	status = "disabled";
+};
+
+&clk_hsi {
+	status = "okay";
+};
+
+&pll1 {
+	div-m = <1>;
+	mul-n = <20>;
+	div-q = <2>;
+	div-r = <2>;
+	clocks = <&clk_hsi>;
+	status = "okay";
+};
