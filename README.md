@@ -51,6 +51,21 @@ py -3.12 -m west build -p always -b nucleo_h745zi_q/stm32h745xx/m7 argisense-zep
 
 Zephyr 4.4 requires the fully qualified board target for this board. Use `nucleo_h745zi_q/stm32h745xx/m4` instead if building the Cortex-M4 target.
 
+## Custom STM32U575RGT6 Board
+
+This repository includes an out-of-tree board definition based on `nucleo_u575zi_q`, adapted for STM32U575RGT6:
+
+```text
+boards/argisense/argisense_u575rg
+```
+
+Build it with:
+
+```bat
+set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
+py -3.12 -m west build -p always -b argisense_u575rg argisense-zephyr-app
+```
+
 The application starts by logging:
 
 ```text
