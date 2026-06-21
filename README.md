@@ -39,15 +39,17 @@ cd C:\Users\zephyr44_workspace
 west init -l argisense-zephyr-app
 west update
 west zephyr-export
-pip install -r zephyr\scripts\requirements.txt
+py -3.12 -m pip install -r zephyr\scripts\requirements.txt
 ```
 
 ## Build
 
 ```bat
 set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
-west build -p always -b nucleo_h745zi_q argisense-zephyr-app
+py -3.12 -m west build -p always -b nucleo_h745zi_q/stm32h745xx/m7 argisense-zephyr-app
 ```
+
+Zephyr 4.4 requires the fully qualified board target for this board. Use `nucleo_h745zi_q/stm32h745xx/m4` instead if building the Cortex-M4 target.
 
 The application starts by logging:
 
