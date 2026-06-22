@@ -4,6 +4,14 @@ Standalone Zephyr 4.4.0 application repository for ArgiSense.
 
 This repository follows the Zephyr application repository pattern used by the official `zephyrproject-rtos/example-application` project. It is intended to live outside the Zephyr source tree and to be stored in its own Git repository.
 
+## Firmware overview
+
+The proposed sensor firmware architecture is documented in:
+
+```text
+docs/firmware-overview.md
+```
+
 ## Repository role
 
 This repository is the west manifest repository and is also configured as a Zephyr module through `zephyr/module.yml`.
@@ -80,6 +88,26 @@ You can also build from the helper script:
 ```bat
 argisense-zephyr-app\app\compile.bat
 argisense-zephyr-app\app\compile.bat hsi
+```
+
+## Power Management
+
+The `argisense_u575rg` application is configured for low-power sensor duty cycling:
+
+- Zephyr system PM is enabled with system-managed device PM and tickless idle.
+- External rails default to off at boot.
+- `+3V3_PRE`, analog power, DAC power, RS485 termination, pressure `PS`, and pressure chip select are controlled from `zephyr,user` GPIOs in the board DTS.
+- The application periodically powers the sensor rails, waits for settling, keeps a short measurement window, powers external rails off again, then sleeps so STM32U575 can enter low-power idle states.
+
+Duty-cycle settings are exposed through Kconfig:
+
+```text
+CONFIG_ARGISENSE_MEASUREMENT_PERIOD_SECONDS
+CONFIG_ARGISENSE_PRE_RAIL_SETTLE_MS
+CONFIG_ARGISENSE_ANALOG_RAIL_SETTLE_MS
+CONFIG_ARGISENSE_MEASUREMENT_WINDOW_MS
+CONFIG_ARGISENSE_PRESSURE_PS_ACTIVE
+CONFIG_ARGISENSE_DAC_POWER_DURING_MEASUREMENT
 ```
 
 The application starts by logging:

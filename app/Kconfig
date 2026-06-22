@@ -1,5 +1,54 @@
 # SPDX-License-Identifier: Apache-2.0
 
+menu "ArgiSense application"
+
+config ARGISENSE_MEASUREMENT_PERIOD_SECONDS
+	int "Measurement period in seconds"
+	default 60
+	range 1 86400
+	help
+	  Time between sensor measurement windows. The application powers down
+	  external sensor rails during this interval so the kernel can enter
+	  low-power idle states.
+
+config ARGISENSE_PRE_RAIL_SETTLE_MS
+	int "Pre-sensor 3V3 rail settle time in milliseconds"
+	default 50
+	range 0 5000
+	help
+	  Delay after enabling +3V3_PRE before touching sensors powered from it.
+
+config ARGISENSE_ANALOG_RAIL_SETTLE_MS
+	int "Analog rail settle time in milliseconds"
+	default 20
+	range 0 5000
+	help
+	  Delay after enabling analog rails before a measurement window begins.
+
+config ARGISENSE_MEASUREMENT_WINDOW_MS
+	int "Measurement window in milliseconds"
+	default 1000
+	range 1 60000
+	help
+	  Placeholder time that keeps sensor rails enabled for acquisition.
+	  Sensor drivers can later replace this window with real sampling logic.
+
+config ARGISENSE_PRESSURE_PS_ACTIVE
+	bool "Drive pressure PS signal active during measurements"
+	default y
+	help
+	  Drive PRES_SEN_PS to its active state while the pressure sensor rail is
+	  enabled. Adjust this after checking the pressure sensor datasheet.
+
+config ARGISENSE_DAC_POWER_DURING_MEASUREMENT
+	bool "Power DAC rail during measurement windows"
+	default n
+	help
+	  Keep the 4-20 mA DAC boost rail off by default to save energy. Enable
+	  this only when the output loop must be refreshed during each cycle.
+
+endmenu
+
 menu "Zephyr"
 source "Kconfig.zephyr"
 endmenu
