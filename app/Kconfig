@@ -8,8 +8,17 @@ config ARGISENSE_MEASUREMENT_PERIOD_SECONDS
 	range 1 86400
 	help
 	  Time between sensor measurement windows. The application powers down
-	  external sensor rails during this interval so the kernel can enter
+	  switched external rails during this interval so the kernel can enter
 	  low-power idle states.
+
+config ARGISENSE_PRE_RAIL_ALWAYS_ON
+	bool "Keep +3V3_PRE enabled while idle"
+	default y
+	help
+	  Keep the pre-sensor rail powered between measurement windows. This is
+	  enabled by default because the selected Dynament Platinum methane sensor
+	  is designed for continuous powered operation, and repeated short-interval
+	  power cycling is outside the intended use of that product.
 
 config ARGISENSE_PRE_RAIL_SETTLE_MS
 	int "Pre-sensor 3V3 rail settle time in milliseconds"
@@ -34,11 +43,13 @@ config ARGISENSE_MEASUREMENT_WINDOW_MS
 	  Sensor drivers can later replace this window with real sampling logic.
 
 config ARGISENSE_PRESSURE_PS_ACTIVE
-	bool "Drive pressure PS signal active during measurements"
-	default y
+	bool "Drive pressure PS signal high during measurements"
+	default n
 	help
-	  Drive PRES_SEN_PS to its active state while the pressure sensor rail is
-	  enabled. Adjust this after checking the pressure sensor datasheet.
+	  Drive PRES_SEN_PS high while the pressure sensor rail is enabled. The
+	  selected MS580305BA01-00 / MS5803-05BA pressure sensor uses PS low for SPI
+	  and PS high for I2C. The methane + pressure board maps the sensor on spi1,
+	  so the default is n to keep PS low during measurements.
 
 config ARGISENSE_DAC_POWER_DURING_MEASUREMENT
 	bool "Power DAC rail during measurement windows"
@@ -77,9 +88,36 @@ config ARGISENSE_METHANE_DAC_RANGE_LOW_PPM
 
 config ARGISENSE_METHANE_DAC_RANGE_HIGH_PPM
 	int "Methane DAC channel high range in ppm"
-	default 10000
+	default 1000000
 	help
-	  Methane concentration mapped to 20 mA on DAC channel 0.
+	  Methane concentration mapped to 20 mA on DAC channel 0. The default
+	  matches a 0-100% volume methane Platinum sensor. Use 50000 for a 0-5%
+	  volume variant.
+
+config ARGISENSE_METHANE_SENSOR_WARMUP_SECONDS
+	int "Dynament methane sensor warm-up time in seconds"
+	default 60
+	range 0 600
+	help
+	  Time after first power before the Dynament Platinum digital gas reading is
+	  expected to represent the calculated methane value. During warm-up, the
+	  digital output may report a fault-style value.
+
+config ARGISENSE_METHANE_SENSOR_READ_PERIOD_MS
+	int "Dynament methane live-data polling period in milliseconds"
+	default 5000
+	range 100 60000
+	help
+	  Nominal period for the live-data-simple UART request shown in Dynament
+	  AN0007.
+
+config ARGISENSE_HUMIDITY_SENSOR_READ_PERIOD_SECONDS
+	int "HTU21D humidity read period in seconds"
+	default 60
+	range 1 86400
+	help
+	  Nominal period for HTU21D relative humidity and ambient temperature
+	  sampling on the methane + pressure board.
 
 config ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
 	int "Pressure DAC channel low range in pascals"
@@ -89,7 +127,7 @@ config ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
 
 config ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
 	int "Pressure DAC channel high range in pascals"
-	default 100000
+	default 500000
 	help
 	  Pressure value mapped to 20 mA on DAC channel 1.
 

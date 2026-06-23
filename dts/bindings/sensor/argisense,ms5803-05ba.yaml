@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  TE Connectivity MS5803-05BA digital absolute pressure sensor.
+
+  The MS580305BA01-00 variant is the 5 bar / 500 kPa member of the
+  MS5803 family. It supports SPI and I2C; the ArgiSense methane + pressure
+  board uses SPI with the sensor PS pin held low.
+
+compatible: "argisense,ms5803-05ba"
+
+include: [sensor-device.yaml, spi-device.yaml]
+
+properties:
+  part-number:
+    type: string
+    required: true
+    description: Manufacturer orderable part number.
+
+  pressure-range-kpa:
+    type: int
+    required: true
+    description: Nominal absolute pressure range in kPa.
+
+  resolution-bits:
+    type: int
+    required: true
+    description: Sensor ADC output resolution in bits.

@@ -31,6 +31,9 @@
 		spi-0 = &spi1;
 		current-loop-dac0 = &dac0_gp8302;
 		current-loop-dac1 = &dac1_gp8302;
+		pressure-sensor = &pressure_ms5803;
+		methane-sensor = &methane_dynament;
+		humidity-sensor = &humidity_htu21d;
 		rs485-uart = &usart2;
 		methane-uart = &uart4;
 		thermistor-adc = &adc1;
@@ -47,6 +50,11 @@
 		pre-power-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
 		analog-power-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
 		rs485-termination-gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+		pressure-part-number = "MS580305BA01-00";
+		pressure-interface = "spi";
+		pressure-ps-active-state = "low";
+		humidity-part-number = "HTU21D";
+		humidity-interface = "i2c2";
 		pressure-ps-gpios = <&gpiob 1 GPIO_ACTIVE_HIGH>;
 		pressure-cs-gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
 		io-channels = <&adc1 1>;
@@ -145,8 +153,20 @@
 &uart4 {
 	pinctrl-0 = <&uart4_tx_pc10 &uart4_rx_pc11>;
 	pinctrl-names = "default";
-	current-speed = <9600>;
+	current-speed = <38400>;
 	status = "okay";
+
+	methane_dynament: methane-sensor {
+		compatible = "argisense,dynament-platinum-hydrocarbon";
+		gas-type = "methane";
+		protocol = "dynament-premier-live-data-simple";
+		full-scale-percent-x100 = <10000>;
+		live-data-variable-id = <0x06>;
+		warmup-time-ms = <60000>;
+		read-period-ms = <5000>;
+		logic-level-mv = <2800>;
+		status = "okay";
+	};
 };
 
 &i2c1 {
@@ -179,6 +199,12 @@
 		max-current-microamp = <25000>;
 		status = "okay";
 	};
+
+	humidity_htu21d: humidity-sensor@40 {
+		compatible = "sensirion,sht21";
+		reg = <0x40>;
+		status = "okay";
+	};
 };
 
 &spi1 {
@@ -186,6 +212,16 @@
 	pinctrl-names = "default";
 	cs-gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
 	status = "okay";
+
+	pressure_ms5803: pressure-sensor@0 {
+		compatible = "argisense,ms5803-05ba";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		part-number = "MS580305BA01-00";
+		pressure-range-kpa = <500>;
+		resolution-bits = <24>;
+		status = "okay";
+	};
 };
 
 &adc1 {

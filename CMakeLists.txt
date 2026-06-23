@@ -31,5 +31,6 @@ project(argisense)
 target_sources(app PRIVATE
   app/src/main.c
   app/src/current_loop_output.c
+  app/src/methane_sensor.c
 )
 argisense_add_module_subdirs()

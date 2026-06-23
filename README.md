@@ -10,6 +10,7 @@ The proposed sensor firmware architecture is documented in:
 
 ```text
 docs/firmware-overview.md
+docs/dynament-platinum-methane.md
 ```
 
 ## Repository role
@@ -69,6 +70,20 @@ boards/argisense/argisense_ph_u575rg
 ```
 
 `argisense_mp_u575rg` is the methane + pressure board currently used by the application. `argisense_ph_u575rg` is separated for the pH PCB/pinout and is ready for a future pH firmware profile.
+
+The methane + pressure board uses the TE Connectivity `MS580305BA01-00`
+(`MS5803-05BA01`) pressure sensor on `spi1`. The sensor `PS` protocol-select
+pin must be low for SPI mode and high for I2C mode; this board keeps the
+default firmware setting low for SPI.
+
+The methane sensor is a Dynament Platinum Series Hydrocarbon infrared sensor on
+`uart4` at 38400 baud. The board DTS describes it as
+`argisense,dynament-platinum-hydrocarbon`, using the Dynament/Premier
+live-data-simple request from AN0007.
+
+The humidity sensor is an HTU21D on `i2c2` at address `0x40`. Zephyr 4.4 uses
+the SHT21-compatible humidity/temperature driver path for this part, so the DTS
+node uses compatible `sensirion,sht21`.
 
 Both boards use a 25 MHz HSE crystal and PLL1 to generate a 160 MHz system clock.
 
@@ -153,15 +168,20 @@ For initial bring-up, Zephyr/MCUboot may use the default development signing key
 The `argisense_mp_u575rg` application is configured for low-power sensor duty cycling:
 
 - Zephyr system PM is enabled with system-managed device PM and tickless idle.
-- External rails default to off at boot.
+- Switched external rails default to off at boot.
+- `+3V3_PRE` is kept enabled by default while idle because the Dynament Platinum methane sensor is intended for continuous powered operation.
 - `+3V3_PRE`, analog power, shared DAC/current-loop power, RS485 termination, pressure `PS`, and pressure chip select are controlled from `zephyr,user` GPIOs in the board DTS.
 - The firmware model exposes two 4-20 mA GP8302 outputs: DAC0 for methane on `i2c1`, and DAC1 for pressure on `i2c2`.
+- HTU21D humidity and ambient temperature sensing is mapped on `i2c2` at `0x40`.
+- The default methane DAC span is 0 ppm to 1000000 ppm to match a 0-100% volume Dynament methane sensor. Use 50000 ppm for a 0-5% volume ordered variant.
+- The default pressure DAC span is 0 Pa to 500000 Pa to match the selected 5 bar absolute pressure sensor.
 - The application periodically powers the sensor rails, waits for settling, keeps a short measurement window, powers external rails off again, then sleeps so STM32U575 can enter low-power idle states.
 
 Duty-cycle settings are exposed through Kconfig:
 
 ```text
 CONFIG_ARGISENSE_MEASUREMENT_PERIOD_SECONDS
+CONFIG_ARGISENSE_PRE_RAIL_ALWAYS_ON
 CONFIG_ARGISENSE_PRE_RAIL_SETTLE_MS
 CONFIG_ARGISENSE_ANALOG_RAIL_SETTLE_MS
 CONFIG_ARGISENSE_MEASUREMENT_WINDOW_MS
@@ -172,6 +192,9 @@ CONFIG_ARGISENSE_DAC_MAX_CURRENT_UA
 CONFIG_ARGISENSE_DAC_FAULT_CURRENT_UA
 CONFIG_ARGISENSE_METHANE_DAC_RANGE_LOW_PPM
 CONFIG_ARGISENSE_METHANE_DAC_RANGE_HIGH_PPM
+CONFIG_ARGISENSE_METHANE_SENSOR_WARMUP_SECONDS
+CONFIG_ARGISENSE_METHANE_SENSOR_READ_PERIOD_MS
+CONFIG_ARGISENSE_HUMIDITY_SENSOR_READ_PERIOD_SECONDS
 CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
 CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
 ```

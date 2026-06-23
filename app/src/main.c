@@ -15,17 +15,27 @@
 #endif
 
 #include "current_loop_output.h"
+#include "methane_sensor.h"
 
 LOG_MODULE_REGISTER(argisense, LOG_LEVEL_INF);
 
 #define USER_NODE DT_PATH(zephyr_user)
 #define DAC0_NODE DT_ALIAS(current_loop_dac0)
 #define DAC1_NODE DT_ALIAS(current_loop_dac1)
+#define METHANE_NODE DT_ALIAS(methane_sensor)
+#define HUMIDITY_NODE DT_ALIAS(humidity_sensor)
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DAC0_NODE, okay),
 	     "Board must define okay current-loop-dac0 alias");
 BUILD_ASSERT(DT_NODE_HAS_STATUS(DAC1_NODE, okay),
 	     "Board must define okay current-loop-dac1 alias");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(METHANE_NODE, okay),
+	     "Board must define okay methane-sensor alias");
+BUILD_ASSERT(DT_PROP(METHANE_NODE, live_data_variable_id) ==
+	     ARGISENSE_DYNAMENT_LIVE_DATA_SIMPLE_VARIABLE_ID,
+	     "Methane sensor live-data-variable-id must match the Dynament request");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(HUMIDITY_NODE, okay),
+	     "Board must define okay humidity-sensor alias");
 BUILD_ASSERT(DT_NODE_HAS_PROP(USER_NODE, dac_channel_count),
 	     "zephyr,user must define dac-channel-count");
 BUILD_ASSERT(DT_PROP(USER_NODE, dac_channel_count) ==
@@ -60,6 +70,9 @@ static const struct gpio_dt_spec pressure_ps =
 	GPIO_DT_SPEC_GET(USER_NODE, pressure_ps_gpios);
 static const struct gpio_dt_spec pressure_cs =
 	GPIO_DT_SPEC_GET(USER_NODE, pressure_cs_gpios);
+static const struct device *const methane_uart = DEVICE_DT_GET(DT_BUS(METHANE_NODE));
+static const struct device *const humidity_sensor = DEVICE_DT_GET(HUMIDITY_NODE);
+static const struct device *const humidity_i2c = DEVICE_DT_GET(DT_BUS(HUMIDITY_NODE));
 
 struct argisense_dac_device {
 	const struct i2c_dt_spec i2c;
@@ -139,6 +152,75 @@ static int argisense_dac_devices_check(void)
 	return 0;
 }
 
+static int argisense_methane_protocol_self_test(void)
+{
+	static const uint8_t an0007_fault_frame[ARGISENSE_DYNAMENT_LIVE_DATA_SIMPLE_FRAME_LEN] = {
+		0x10, 0x1a, 0x08, 0x04, 0x00, 0x04, 0x00, 0x00,
+		0x00, 0x7a, 0xc3, 0x10, 0x1f, 0x01, 0xa6,
+	};
+	struct argisense_dynament_live_data_simple live_data;
+	int ret;
+
+	ret = argisense_dynament_parse_live_data_simple(
+		an0007_fault_frame, sizeof(an0007_fault_frame), &live_data);
+	if (ret < 0) {
+		LOG_ERR("Dynament live-data parser self-test failed: %d", ret);
+		return ret;
+	}
+
+	LOG_INF("Dynament parser ready: AN0007 version=%u status=0x%04x valid=%s",
+		live_data.version, live_data.status_flags,
+		live_data.gas_valid ? "yes" : "no");
+
+	return 0;
+}
+
+static int argisense_methane_sensor_check(void)
+{
+	const uint32_t full_scale = DT_PROP(METHANE_NODE, full_scale_percent_x100);
+	uint8_t request[ARGISENSE_DYNAMENT_LIVE_DATA_REQUEST_LEN];
+	int ret;
+
+	if (!device_is_ready(methane_uart)) {
+		LOG_ERR("Methane sensor UART %s is not ready", methane_uart->name);
+		return -ENODEV;
+	}
+
+	ret = argisense_dynament_live_data_request(request);
+	if (ret != sizeof(request)) {
+		LOG_ERR("Failed to build Dynament live-data request: %d", ret);
+		return -EIO;
+	}
+
+	LOG_INF("Dynament methane sensor mapped to %s at %u baud",
+		methane_uart->name, DT_PROP(DT_BUS(METHANE_NODE), current_speed));
+	LOG_INF("Dynament protocol=%s full-scale=%u.%02u%%vol warmup=%ums",
+		DT_PROP(METHANE_NODE, protocol), full_scale / 100, full_scale % 100,
+		DT_PROP(METHANE_NODE, warmup_time_ms));
+	LOG_HEXDUMP_INF(request, sizeof(request),
+			"Dynament live-data-simple request");
+
+	return argisense_methane_protocol_self_test();
+}
+
+static int argisense_humidity_sensor_check(void)
+{
+	if (!device_is_ready(humidity_i2c)) {
+		LOG_ERR("HTU21D I2C bus %s is not ready", humidity_i2c->name);
+		return -ENODEV;
+	}
+
+	if (!device_is_ready(humidity_sensor)) {
+		LOG_ERR("HTU21D sensor device %s is not ready", humidity_sensor->name);
+		return -ENODEV;
+	}
+
+	LOG_INF("HTU21D humidity sensor mapped to %s on %s address 0x%02x",
+		humidity_sensor->name, humidity_i2c->name, DT_REG_ADDR(HUMIDITY_NODE));
+
+	return 0;
+}
+
 static int32_t midpoint(int32_t low, int32_t high)
 {
 	return low + (int32_t)(((int64_t)high - low) / 2);
@@ -205,14 +287,15 @@ static int argisense_power_configure(void)
 	return configure_input_pulldown(&dac_alarm, "DAC alarm");
 }
 
-static void argisense_power_all_off(void)
+static void argisense_power_idle_state(void)
 {
 	(void)set_gpio(&rs485_termination, "RS485 termination", false);
 	(void)set_gpio(&dac_power, "DAC power", false);
 	(void)set_gpio(&analog_power, "analog power", false);
 	(void)set_gpio(&pressure_ps, "pressure PS", false);
 	(void)set_gpio(&pressure_cs, "pressure CS", false);
-	(void)set_gpio(&pre_power, "3V3_PRE power", false);
+	(void)set_gpio(&pre_power, "3V3_PRE power",
+		       IS_ENABLED(CONFIG_ARGISENSE_PRE_RAIL_ALWAYS_ON));
 }
 
 static int argisense_boot_confirm_if_ready(void)
@@ -299,7 +382,19 @@ int main(void)
 		return ret;
 	}
 
-	argisense_power_all_off();
+	ret = argisense_methane_sensor_check();
+	if (ret < 0) {
+		LOG_ERR("Methane sensor mapping check failed: %d", ret);
+		return ret;
+	}
+
+	ret = argisense_humidity_sensor_check();
+	if (ret < 0) {
+		LOG_ERR("Humidity sensor mapping check failed: %d", ret);
+		return ret;
+	}
+
+	argisense_power_idle_state();
 
 	ret = argisense_boot_confirm_if_ready();
 	if (ret < 0) {
@@ -309,6 +404,11 @@ int main(void)
 	LOG_INF("Power manager ready: period=%ds, window=%dms",
 		CONFIG_ARGISENSE_MEASUREMENT_PERIOD_SECONDS,
 		CONFIG_ARGISENSE_MEASUREMENT_WINDOW_MS);
+	LOG_INF("HTU21D humidity read period=%ds",
+		CONFIG_ARGISENSE_HUMIDITY_SENSOR_READ_PERIOD_SECONDS);
+	LOG_INF("+3V3_PRE idle policy: %s",
+		IS_ENABLED(CONFIG_ARGISENSE_PRE_RAIL_ALWAYS_ON) ?
+		"kept on for Dynament methane sensor" : "powered off");
 	LOG_INF("Dual GP8302 output model ready: DAC0=methane, DAC1=pressure");
 
 	while (true) {
@@ -320,8 +420,8 @@ int main(void)
 			argisense_prepare_output_placeholders();
 		}
 
-		argisense_power_all_off();
-		LOG_INF("External rails off; entering low-power idle");
+		argisense_power_idle_state();
+		LOG_INF("External switched rails in idle state; entering low-power idle");
 
 		k_sleep(K_SECONDS(CONFIG_ARGISENSE_MEASUREMENT_PERIOD_SECONDS));
 	}

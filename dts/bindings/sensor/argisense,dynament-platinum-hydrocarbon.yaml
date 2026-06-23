@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Dynament Platinum Series hydrocarbon infrared gas sensor on a UART bus.
+
+  The ArgiSense methane + pressure board uses the digital UART interface and
+  the Dynament/Premier live-data-simple request described in AN0007. The sensor
+  reports gas concentration as a little-endian IEEE-754 percentage of full-scale
+  volume in the live data response.
+
+compatible: "argisense,dynament-platinum-hydrocarbon"
+
+include: [sensor-device.yaml, uart-device.yaml]
+
+properties:
+  gas-type:
+    type: string
+    required: true
+    enum:
+      - "methane"
+      - "propane"
+      - "methane-co2"
+      - "methane-propane"
+    description: Target gas configuration ordered for the sensor.
+
+  protocol:
+    type: string
+    required: true
+    enum:
+      - "dynament-premier-live-data-simple"
+      - "modbus-rtu"
+    description: Digital protocol configured for the sensor UART.
+
+  full-scale-percent-x100:
+    type: int
+    required: true
+    description: |
+      Sensor full-scale methane range in percent volume multiplied by 100.
+      Examples: 500 means 5.00 percent volume, 10000 means 100.00 percent
+      volume.
+
+  live-data-variable-id:
+    type: int
+    required: true
+    description: Dynament variable ID for the live-data-simple structure.
+
+  warmup-time-ms:
+    type: int
+    required: true
+    description: Sensor warm-up time after power is first applied.
+
+  read-period-ms:
+    type: int
+    required: true
+    description: Nominal polling period for live-data-simple reads.
+
+  logic-level-mv:
+    type: int
+    required: true
+    description: Nominal UART logic level used by the sensor.
