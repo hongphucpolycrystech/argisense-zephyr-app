@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: GP8302 single-channel current-loop DAC
+
+compatible: "argisense,gp8302"
+
+include: [dac-controller.yaml, i2c-device.yaml]
+
+properties:
+  "#io-channel-cells":
+    const: 1
+
+  output-source:
+    type: string
+    required: true
+    description: |
+      Logical process value driven by this DAC device, for example methane or
+      pressure.
+
+  max-current-microamp:
+    type: int
+    default: 25000
+    description: Maximum output current supported by the GP8302 circuit.
+
+io-channel-cells:
+  - output

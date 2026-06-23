@@ -61,26 +61,38 @@ Zephyr 4.4 requires the fully qualified board target for this board. Use `nucleo
 
 ## Custom STM32U575RGT6 Board
 
-This repository includes an out-of-tree board definition based on `nucleo_u575zi_q`, adapted for STM32U575RGT6:
+This repository includes out-of-tree board definitions based on `nucleo_u575zi_q`, adapted for STM32U575RGT6:
 
 ```text
-boards/argisense/argisense_u575rg
+boards/argisense/argisense_mp_u575rg
+boards/argisense/argisense_ph_u575rg
 ```
 
-The custom board uses a 25 MHz HSE crystal and PLL1 to generate a 160 MHz system clock.
+`argisense_mp_u575rg` is the methane + pressure board currently used by the application. `argisense_ph_u575rg` is separated for the pH PCB/pinout and is ready for a future pH firmware profile.
 
-Build it with:
+Both boards use a 25 MHz HSE crystal and PLL1 to generate a 160 MHz system clock.
+
+Recommended product split:
+
+```text
+argisense_mp_u575rg  -> methane + pressure firmware profile
+argisense_ph_u575rg  -> pH firmware profile
+```
+
+Keep shared services such as MCUboot, RS485 framing, calibration storage, power sequencing, and 4-20 mA scaling in common code. Keep sensor-specific measurement logic and DAC mapping in product-specific files or snippets.
+
+Build the methane + pressure application with:
 
 ```bat
 set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
-py -3.12 -m west build -p always -b argisense_u575rg argisense-zephyr-app
+py -3.12 -m west build -p always -b argisense_mp_u575rg argisense-zephyr-app
 ```
 
 To use the internal HSI 16 MHz oscillator instead of the external 25 MHz HSE crystal:
 
 ```bat
 set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
-py -3.12 -m west build -p always -b argisense_u575rg -S argisense-u575rg-hsi argisense-zephyr-app
+py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-u575-hsi argisense-zephyr-app
 ```
 
 You can also build from the helper script:
@@ -90,13 +102,60 @@ argisense-zephyr-app\app\compile.bat
 argisense-zephyr-app\app\compile.bat hsi
 ```
 
+## MCUboot build
+
+The custom `argisense_mp_u575rg` board DTS already reserves flash partitions for MCUboot:
+
+- `mcuboot`
+- `image-0`
+- `image-1`
+- `storage`
+
+This repository enables MCUboot through Zephyr sysbuild:
+
+```text
+sysbuild.conf
+sysbuild/argisense-zephyr-app.conf
+sysbuild/mcuboot.conf
+```
+
+The selected boot mode is `SWAP_USING_OFFSET`. It uses the primary and secondary image slots without requiring a `scratch_partition`, and still supports MCUboot test/confirm rollback behavior.
+
+Build the application together with MCUboot:
+
+```bat
+set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
+set ARGISENSE_APP_ROOT=C:\Users\zephyr44_workspace\argisense-zephyr-app
+py -3.12 -m west build -p always --sysbuild -b argisense_mp_u575rg "%ARGISENSE_APP_ROOT%" -- "-DBOARD_ROOT=%ARGISENSE_APP_ROOT%" "-DDTS_ROOT=%ARGISENSE_APP_ROOT%" "-DSNIPPET_ROOT=%ARGISENSE_APP_ROOT%"
+```
+
+Or use the helper script:
+
+```bat
+argisense-zephyr-app\app\compile.bat mcuboot
+argisense-zephyr-app\app\compile.bat mcuboot hsi
+```
+
+Typical sysbuild outputs are:
+
+```text
+build\mcuboot\zephyr\zephyr.hex
+build\argisense-zephyr-app\zephyr\zephyr.signed.bin
+build\argisense-zephyr-app\zephyr\zephyr.signed.hex
+```
+
+The application calls `boot_write_img_confirmed()` after the basic board bring-up checks pass. That means a test update is only confirmed after GPIO power setup and both GP8302 I2C mappings are valid. As the firmware grows, move this confirmation later so it happens after methane, pressure, RS485, and DAC output self-tests also pass.
+
+For initial bring-up, Zephyr/MCUboot may use the default development signing key. Do not use that key for production. Store production signing keys outside this repository, then configure the key path through the build environment or a private, ignored config fragment.
+
 ## Power Management
 
-The `argisense_u575rg` application is configured for low-power sensor duty cycling:
+The `argisense_mp_u575rg` application is configured for low-power sensor duty cycling:
 
 - Zephyr system PM is enabled with system-managed device PM and tickless idle.
 - External rails default to off at boot.
-- `+3V3_PRE`, analog power, DAC power, RS485 termination, pressure `PS`, and pressure chip select are controlled from `zephyr,user` GPIOs in the board DTS.
+- `+3V3_PRE`, analog power, shared DAC/current-loop power, RS485 termination, pressure `PS`, and pressure chip select are controlled from `zephyr,user` GPIOs in the board DTS.
+- The firmware model exposes two 4-20 mA GP8302 outputs: DAC0 for methane on `i2c1`, and DAC1 for pressure on `i2c2`.
 - The application periodically powers the sensor rails, waits for settling, keeps a short measurement window, powers external rails off again, then sleeps so STM32U575 can enter low-power idle states.
 
 Duty-cycle settings are exposed through Kconfig:
@@ -108,6 +167,13 @@ CONFIG_ARGISENSE_ANALOG_RAIL_SETTLE_MS
 CONFIG_ARGISENSE_MEASUREMENT_WINDOW_MS
 CONFIG_ARGISENSE_PRESSURE_PS_ACTIVE
 CONFIG_ARGISENSE_DAC_POWER_DURING_MEASUREMENT
+CONFIG_ARGISENSE_DAC_MIN_CURRENT_UA
+CONFIG_ARGISENSE_DAC_MAX_CURRENT_UA
+CONFIG_ARGISENSE_DAC_FAULT_CURRENT_UA
+CONFIG_ARGISENSE_METHANE_DAC_RANGE_LOW_PPM
+CONFIG_ARGISENSE_METHANE_DAC_RANGE_HIGH_PPM
+CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
+CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
 ```
 
 The application starts by logging:

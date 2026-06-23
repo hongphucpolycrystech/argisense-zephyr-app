@@ -28,5 +28,8 @@ list(APPEND SNIPPET_ROOT ${CMAKE_CURRENT_LIST_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(argisense)
 
-target_sources(app PRIVATE app/src/main.c)
+target_sources(app PRIVATE
+  app/src/main.c
+  app/src/current_loop_output.c
+)
 argisense_add_module_subdirs()

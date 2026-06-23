@@ -47,6 +47,52 @@ config ARGISENSE_DAC_POWER_DURING_MEASUREMENT
 	  Keep the 4-20 mA DAC boost rail off by default to save energy. Enable
 	  this only when the output loop must be refreshed during each cycle.
 
+config ARGISENSE_DAC_MIN_CURRENT_UA
+	int "Normal minimum DAC loop current in microamps"
+	default 4000
+	range 0 25000
+	help
+	  Normal low-end current for each 4-20 mA current-loop output channel.
+
+config ARGISENSE_DAC_MAX_CURRENT_UA
+	int "Normal maximum DAC loop current in microamps"
+	default 20000
+	range 0 25000
+	help
+	  Normal high-end current for each 4-20 mA current-loop output channel.
+
+config ARGISENSE_DAC_FAULT_CURRENT_UA
+	int "DAC fault loop current in microamps"
+	default 3600
+	range 0 25000
+	help
+	  Current command used when the source sensor value for a DAC channel is
+	  invalid. This is the default low-fault value for industrial loops.
+
+config ARGISENSE_METHANE_DAC_RANGE_LOW_PPM
+	int "Methane DAC channel low range in ppm"
+	default 0
+	help
+	  Methane concentration mapped to 4 mA on DAC channel 0.
+
+config ARGISENSE_METHANE_DAC_RANGE_HIGH_PPM
+	int "Methane DAC channel high range in ppm"
+	default 10000
+	help
+	  Methane concentration mapped to 20 mA on DAC channel 0.
+
+config ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
+	int "Pressure DAC channel low range in pascals"
+	default 0
+	help
+	  Pressure value mapped to 4 mA on DAC channel 1.
+
+config ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
+	int "Pressure DAC channel high range in pascals"
+	default 100000
+	help
+	  Pressure value mapped to 20 mA on DAC channel 1.
+
 endmenu
 
 menu "Zephyr"

@@ -9,8 +9,8 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
 / {
-	model = "ArgiSense STM32U575RGT6 custom board";
-	compatible = "argisense,stm32u575rg";
+	model = "ArgiSense methane pressure STM32U575RGT6 board";
+	compatible = "argisense,stm32u575rg-mp";
 
 	#address-cells = <1>;
 	#size-cells = <1>;
@@ -29,6 +29,8 @@
 		i2c-0 = &i2c1;
 		i2c-1 = &i2c2;
 		spi-0 = &spi1;
+		current-loop-dac0 = &dac0_gp8302;
+		current-loop-dac1 = &dac1_gp8302;
 		rs485-uart = &usart2;
 		methane-uart = &uart4;
 		thermistor-adc = &adc1;
@@ -37,6 +39,9 @@
 	};
 
 	zephyr,user {
+		dac-channel-count = <2>;
+		dac0-output-source = "methane";
+		dac1-output-source = "pressure";
 		dac-power-gpios = <&gpioc 6 GPIO_ACTIVE_HIGH>;
 		dac-alarm-gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;
 		pre-power-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
@@ -149,6 +154,15 @@
 	pinctrl-names = "default";
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	status = "okay";
+
+	dac0_gp8302: dac@58 {
+		compatible = "argisense,gp8302";
+		reg = <0x58>;
+		#io-channel-cells = <1>;
+		output-source = "methane";
+		max-current-microamp = <25000>;
+		status = "okay";
+	};
 };
 
 &i2c2 {
@@ -156,6 +170,15 @@
 	pinctrl-names = "default";
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	status = "okay";
+
+	dac1_gp8302: dac@58 {
+		compatible = "argisense,gp8302";
+		reg = <0x58>;
+		#io-channel-cells = <1>;
+		output-source = "pressure";
+		max-current-microamp = <25000>;
+		status = "okay";
+	};
 };
 
 &spi1 {

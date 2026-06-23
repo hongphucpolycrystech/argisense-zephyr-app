@@ -12,11 +12,11 @@ settings:
 Available snippets:
 
 ```text
-argisense-u575rg-hsi
+argisense-u575-hsi
 ```
 
-Build the STM32U575RGT6 board with the internal HSI 16 MHz oscillator instead of the external 25 MHz HSE crystal:
+Build an STM32U575RGT6 ArgiSense board with the internal HSI 16 MHz oscillator instead of the external 25 MHz HSE crystal:
 
 ```bat
-py -3.12 -m west build -p always -b argisense_u575rg -S argisense-u575rg-hsi argisense-zephyr-app
+py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-u575-hsi argisense-zephyr-app
 ```

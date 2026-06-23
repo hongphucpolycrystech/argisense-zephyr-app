@@ -1,0 +1,6 @@
+board:
+  name: argisense_mp_u575rg
+  full_name: ArgiSense Methane Pressure STM32U575RG
+  vendor: argisense
+  socs:
+    - name: stm32u575xx
