@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+add_subdirectory_ifdef(CONFIG_MS5803_05BA ms5803_05ba)
+add_subdirectory_ifdef(CONFIG_DYNAMENT_PLATINUM_HYDROCARBON dynament_platinum)
+add_subdirectory_ifdef(CONFIG_ARGISENSE_HTU21D htu21d)

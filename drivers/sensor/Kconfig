@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+rsource "ms5803_05ba/Kconfig"
+rsource "dynament_platinum/Kconfig"
+rsource "htu21d/Kconfig"

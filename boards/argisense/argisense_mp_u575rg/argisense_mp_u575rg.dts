@@ -21,6 +21,7 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		zephyr,settings-partition = &storage_partition;
 	};
 
 	aliases {
@@ -31,6 +32,7 @@
 		spi-0 = &spi1;
 		current-loop-dac0 = &dac0_gp8302;
 		current-loop-dac1 = &dac1_gp8302;
+		eeprom0 = &eeprom_at24c512;
 		pressure-sensor = &pressure_ms5803;
 		methane-sensor = &methane_dynament;
 		humidity-sensor = &humidity_htu21d;
@@ -148,6 +150,11 @@
 	current-speed = <115200>;
 	de-enable;
 	status = "okay";
+
+	rs485_modbus: modbus0 {
+		compatible = "zephyr,modbus-serial";
+		status = "okay";
+	};
 };
 
 &uart4 {
@@ -183,6 +190,16 @@
 		max-current-microamp = <25000>;
 		status = "okay";
 	};
+
+	eeprom_at24c512: eeprom@50 {
+		compatible = "microchip,24c512", "atmel,at24";
+		reg = <0x50>;
+		size = <DT_SIZE_K(64)>;
+		pagesize = <128>;
+		address-width = <16>;
+		timeout = <5>;
+		status = "okay";
+	};
 };
 
 &i2c2 {
@@ -201,8 +218,9 @@
 	};
 
 	humidity_htu21d: humidity-sensor@40 {
-		compatible = "sensirion,sht21";
+		compatible = "argisense,htu21d";
 		reg = <0x40>;
+		part-number = "HTU21D";
 		status = "okay";
 	};
 };

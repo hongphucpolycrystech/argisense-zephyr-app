@@ -9,6 +9,7 @@ function(argisense_add_module_subdirs)
 
   if(NOT argisense_module_subdirs_added)
     set_property(GLOBAL PROPERTY ARGISENSE_MODULE_SUBDIRS_ADDED TRUE)
+    zephyr_include_directories(${ARGISENSE_MODULE_ROOT}/include)
     add_subdirectory(${ARGISENSE_MODULE_ROOT}/drivers ${CMAKE_CURRENT_BINARY_DIR}/argisense_drivers)
     add_subdirectory(${ARGISENSE_MODULE_ROOT}/lib ${CMAKE_CURRENT_BINARY_DIR}/argisense_lib)
   endif()
@@ -31,6 +32,10 @@ project(argisense)
 target_sources(app PRIVATE
   app/src/main.c
   app/src/current_loop_output.c
-  app/src/methane_sensor.c
+  app/src/argisense_power.c
+  app/src/argisense_registers.c
+  app/src/argisense_settings.c
+  app/src/argisense_rs485.c
+  app/src/argisense_shell.c
 )
 argisense_add_module_subdirs()

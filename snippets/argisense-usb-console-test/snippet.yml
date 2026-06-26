@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: argisense-usb-console-test
+append:
+  EXTRA_DTC_OVERLAY_FILE: argisense_usb_console_test.overlay

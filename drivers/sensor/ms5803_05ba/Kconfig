@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config MS5803_05BA
+	bool "TE MS5803-05BA pressure and temperature sensor"
+	default y
+	depends on SENSOR
+	depends on SPI
+	depends on DT_HAS_ARGISENSE_MS5803_05BA_ENABLED
+	help
+	  Enable the TE Connectivity MS5803-05BA digital absolute pressure
+	  sensor driver. The driver uses the Zephyr Sensor API and supports the
+	  SPI wiring used by the ArgiSense methane + pressure board.

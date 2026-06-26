@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config ARGISENSE_HTU21D
+	bool "HTU21D humidity and temperature sensor"
+	default y
+	depends on SENSOR
+	depends on I2C
+	depends on DT_HAS_ARGISENSE_HTU21D_ENABLED
+	help
+	  Enable the HTU21D humidity and temperature sensor driver used by the
+	  ArgiSense methane + pressure board. The driver uses the Zephyr Sensor
+	  API and exposes SENSOR_CHAN_HUMIDITY and SENSOR_CHAN_AMBIENT_TEMP.

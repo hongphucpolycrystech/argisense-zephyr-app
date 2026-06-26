@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config DYNAMENT_PLATINUM_HYDROCARBON
+	bool "Dynament Platinum hydrocarbon gas sensor"
+	default y
+	depends on SENSOR
+	depends on SERIAL
+	depends on DT_HAS_ARGISENSE_DYNAMENT_PLATINUM_HYDROCARBON_ENABLED
+	help
+	  Enable the Dynament Platinum Series hydrocarbon infrared gas sensor
+	  driver. The driver uses the live-data-simple UART protocol and exposes
+	  methane concentration through ArgiSense private Sensor API channels.

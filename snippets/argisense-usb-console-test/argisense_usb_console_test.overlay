@@ -1,0 +1,26 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Test-only overlay for Zephyr samples/subsys/usb/console.
+ * The sample asserts that zephyr,console is a CDC ACM UART.
+ */
+
+/ {
+	chosen {
+		zephyr,console = &argisense_usb_console_test_uart;
+	};
+};
+
+&clk_hsi48 {
+	status = "okay";
+};
+
+zephyr_udc0: &usbotg_fs {
+	pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	argisense_usb_console_test_uart: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+	};
+};

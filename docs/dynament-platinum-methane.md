@@ -171,14 +171,15 @@ Implemented now:
 
 - DTS binding for `argisense,dynament-platinum-hydrocarbon`.
 - `uart4` board node for the Dynament methane sensor.
-- Startup mapping check and request packet generation.
-- Parser helper for the AN0007 live-data-simple compact frame.
+- Out-of-tree Zephyr sensor driver in `drivers/sensor/dynament_platinum`.
+- Startup mapping check through the methane sensor device.
+- AN0007 live-data-simple UART request and compact-frame parser in the driver.
 - Default idle policy that keeps `+3V3_PRE` powered.
 
 Still required before production:
 
 - Full UART stream state machine with DLE byte-stuff handling.
-- Sensor read timeout and retry policy.
+- Retry policy around the current blocking read timeout.
 - Exact interpretation of Dynament status flags from TDS0045.
 - Optional Modbus RTU mode if the ordered sensor is configured for Modbus
   instead of the Dynament/Premier protocol.

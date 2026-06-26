@@ -22,5 +22,15 @@ properties:
     default: 25000
     description: Maximum output current supported by the GP8302 circuit.
 
+  resolution-bits:
+    type: int
+    default: 12
+    description: GP8302 DAC resolution in bits.
+
+  output-register:
+    type: int
+    default: 0x02
+    description: GP8302 register used to update the output current DAC code.
+
 io-channel-cells:
   - output

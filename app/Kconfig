@@ -53,10 +53,19 @@ config ARGISENSE_PRESSURE_PS_ACTIVE
 
 config ARGISENSE_DAC_POWER_DURING_MEASUREMENT
 	bool "Power DAC rail during measurement windows"
-	default n
+	default y
 	help
-	  Keep the 4-20 mA DAC boost rail off by default to save energy. Enable
-	  this only when the output loop must be refreshed during each cycle.
+	  Power the 4-20 mA DAC boost rail during each measurement window so the
+	  GP8302 current-loop outputs can be refreshed, then turn it back off in
+	  idle to preserve the duty-cycled power model.
+
+config ARGISENSE_DAC_POWER_IDLE
+	bool "Keep DAC rail enabled in idle"
+	default y
+	help
+	  Keep the GP8302/current-loop rail powered after the output is refreshed
+	  so the 4-20 mA outputs remain active between measurement cycles. Disable
+	  this only when the product intentionally duty-cycles the analog output.
 
 config ARGISENSE_DAC_MIN_CURRENT_UA
 	int "Normal minimum DAC loop current in microamps"

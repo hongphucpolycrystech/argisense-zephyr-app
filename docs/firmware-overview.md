@@ -1,8 +1,8 @@
 # ArgiSense Methane + Pressure Firmware Overview
 
-This document describes the proposed firmware architecture for the ArgiSense
-methane + pressure product profile on the `argisense_mp_u575rg` board, based on
-STM32U575RGT6 and Zephyr 4.4.0.
+This document describes the current firmware architecture and remaining
+integration notes for the ArgiSense methane + pressure product profile on the
+`argisense_mp_u575rg` board, based on STM32U575RGT6 and Zephyr 4.4.0.
 
 The firmware reads methane gas from a Dynament Platinum Hydrocarbon infrared
 sensor, pressure from an MS580305BA01-00 sensor, and humidity/ambient
@@ -58,8 +58,9 @@ The `argisense_mp_u575rg` board DTS currently exposes these hardware interfaces:
 | RS485 | `usart2` | `PA2`, `PA3`, `PA1 DE` | Half-duplex RS485 port |
 | Methane sensor | `uart4` | `PC10`, `PC11` | Dynament Platinum methane UART, 38400 baud |
 | DAC0 and EEPROM bus | `i2c1` | `PB8`, `PB9` | Methane GP8302 at `0x58` and EEPROM |
+| External EEPROM | `i2c1` | `PB8`, `PB9` | AT24C512C at `0x50`, 64 KiB, Zephyr `atmel,at24` driver |
 | DAC1/helper bus | `i2c2` | `PB10`, `PB14` | Pressure GP8302 at `0x58`, analog monitor, and HTU21D |
-| Humidity sensor | `i2c2` | `PB10`, `PB14` | HTU21D at `0x40`, Zephyr `sensirion,sht21` compatible |
+| Humidity sensor | `i2c2` | `PB10`, `PB14` | HTU21D at `0x40`, `argisense,htu21d` driver |
 | Pressure sensor | `spi1` | `PA5`, `PA6`, `PA7`, `PA4 CS` | MS580305BA01-00 / MS5803-05BA pressure sensor SPI |
 | Thermistor/ADC | `adc1` | `PC0 / ADC1_IN1` | Analog temperature or board sensing |
 
@@ -83,52 +84,55 @@ The board-specific GPIOs are exposed through `/zephyr,user`:
 | `pressure-ps-gpios` | MS5803 protocol select, low = SPI and high = I2C | Low during SPI measurements |
 | `pressure-cs-gpios` | Pressure sensor SPI chip select | Inactive |
 
-## Proposed Runtime Model
+## Runtime Model
 
-The firmware should run as a small event-driven application with one primary
-measurement loop and optional communication work items.
+The firmware runs as one primary measurement loop plus small service modules.
+Hardware protocol code lives in out-of-tree Zephyr drivers, while product
+policy, persistent settings, Modbus registers, and shell commands stay in
+`app/src`.
 
-Recommended thread/work split:
+Current split:
 
-| Component | Responsibility | Suggested context |
+| Component | Location | Responsibility |
 | --- | --- | --- |
-| Power manager | Controls external rails and settle delays | Main thread or service module |
-| Sensor manager | Coordinates methane, pressure, and auxiliary reads | Main measurement loop |
-| Methane driver | UART protocol parser for methane module | Work queue or blocking read with timeout |
-| Pressure driver | SPI transactions and compensation | Main measurement loop |
-| Humidity driver | HTU21D relative humidity and ambient temperature reads | Main measurement loop |
-| DAC driver | Converts methane and pressure values to two GP8302 4-20 mA commands | Measurement loop or output service |
-| RS485 service | Modbus RTU or framed protocol slave | Dedicated thread or UART async callbacks |
-| Data model | Holds latest measurements, status flags, timestamps | Shared module with locking |
+| Main loop | `app/src/main.c` | Coordinates power, sensor reads, DAC updates, register snapshots, and MCUboot confirmation |
+| Power manager | `app/src/argisense_power.c` | Controls sensor rails, DAC power, RS485 termination, and pressure protocol-select GPIOs |
+| Settings | `app/src/argisense_settings.c` | Loads and saves runtime configuration through Zephyr Settings/NVS |
+| Register model | `app/src/argisense_registers.c` | Owns the Modbus holding-register map and coherent measurement snapshots |
+| RS485 service | `app/src/argisense_rs485.c` | Starts the Zephyr Modbus RTU server and forwards reads/writes to the register model |
+| Shell diagnostics | `app/src/argisense_shell.c` | Provides driver, sensor, settings, and register inspection commands |
+| Current-loop output | `app/src/current_loop_output.c` | Converts methane and pressure process values to GP8302 current commands |
+| Methane driver | `drivers/sensor/dynament_platinum` | Dynament UART live-data-simple request/parser exposed through Zephyr Sensor API |
+| Pressure driver | `drivers/sensor/ms5803_05ba` | MS5803 reset, PROM CRC, ADC conversion, and pressure/temperature compensation |
+| Humidity driver | `drivers/sensor/htu21d` | HTU21D reset, humidity/temperature conversion, CRC check, and Sensor API channels |
+| DAC driver | `drivers/dac` | GP8302 Zephyr DAC API implementation |
+| External EEPROM | Zephyr `drivers/eeprom/eeprom_at2x.c` | AT24C512C access through the standard EEPROM API |
 
-The initial implementation can stay simple and run from `main.c`. Once sensor
-drivers grow, split the application into these files:
+Important files:
 
 ```text
 app/src/main.c
-app/src/power_manager.c
-app/src/power_manager.h
-app/src/sensor_manager.c
-app/src/sensor_manager.h
-app/src/methane_sensor.c
-app/src/methane_sensor.h
-app/src/pressure_sensor.c
-app/src/pressure_sensor.h
-app/src/humidity_sensor.c
-app/src/humidity_sensor.h
-app/src/current_loop_dac.c
-app/src/current_loop_dac.h
+app/src/argisense_power.c
+app/src/argisense_power.h
+app/src/argisense_settings.c
+app/src/argisense_settings.h
+app/src/argisense_registers.c
+app/src/argisense_registers.h
+app/src/argisense_rs485.c
+app/src/argisense_rs485.h
+app/src/argisense_shell.c
 app/src/current_loop_output.c
 app/src/current_loop_output.h
-app/src/rs485_service.c
-app/src/rs485_service.h
-app/src/measurement_data.c
-app/src/measurement_data.h
+drivers/sensor/dynament_platinum/
+drivers/sensor/ms5803_05ba/
+drivers/sensor/htu21d/
+drivers/dac/
+dts/bindings/sensor/argisense,htu21d.yaml
 ```
 
 ## Measurement Cycle
 
-The proposed measurement sequence is:
+The measurement sequence is:
 
 1. Wake from Zephyr idle.
 2. Keep RS485 termination disabled unless configured by the host.
@@ -139,7 +143,9 @@ The proposed measurement sequence is:
 7. Wait `CONFIG_ARGISENSE_ANALOG_RAIL_SETTLE_MS`.
 8. Read pressure over SPI.
 9. Read Dynament methane live-data-simple over UART.
-10. Read HTU21D humidity and ambient temperature over I2C.
+10. Read HTU21D humidity and ambient temperature over I2C when the configured
+    humidity read period has elapsed; otherwise reuse the cached humidity
+    sample.
 11. Validate and timestamp all readings.
 12. Update the internal data model.
 13. Update GP8302 DAC0 from methane and GP8302 DAC1 from pressure if enabled.
@@ -224,21 +230,32 @@ The detailed integration note is in `docs/dynament-platinum-methane.md`.
 ## Humidity Sensor Handling
 
 The selected humidity sensor is HTU21D. It is connected to `i2c2` at address
-`0x40`. Zephyr 4.4 does not need an out-of-tree HTU21D driver for this board:
-HTU21D is handled by the built-in SHT21-compatible driver path, with DTS
-compatible `sensirion,sht21` and Kconfig `CONFIG_SENSOR=y`.
+`0x40` and is handled by the out-of-tree `argisense,htu21d` driver under
+`drivers/sensor/htu21d`. The driver performs soft reset, I2C no-hold
+humidity/temperature conversions, CRC validation, and Zephyr Sensor API channel
+conversion.
 
-Recommended behavior:
+Implemented behavior:
 
-- Fetch `SENSOR_CHAN_HUMIDITY` and `SENSOR_CHAN_AMBIENT_TEMP` after the I2C bus
-  is ready.
+- Bind the DTS node with `compatible = "argisense,htu21d"` and
+  `part-number = "HTU21D"`.
+- Send soft reset command `0xfe` during driver initialization.
+- Use no-hold humidity command `0xf5` and no-hold temperature command `0xf3`.
+- Validate the 3-byte HTU21D response with CRC-8 polynomial `0x31`.
+- Expose `SENSOR_CHAN_HUMIDITY` and `SENSOR_CHAN_AMBIENT_TEMP` through the
+  standard Zephyr Sensor API.
 - Use `CONFIG_ARGISENSE_HUMIDITY_SENSOR_READ_PERIOD_SECONDS` to avoid reading
-  humidity more often than needed.
-- Store relative humidity as `%RH x100` and ambient temperature as millidegrees
+  humidity more often than needed; the application caches the latest successful
+  sample.
+- Store relative humidity as `%RH x100` and ambient temperature as centi-degrees
   Celsius in the central data model.
-- Expose humidity sensor communication errors in the RS485 status map.
+- Expose humidity sensor validity and communication errors in register `2`
+  status bits.
+- Expose HTU21D diagnostics over RS485 registers `80..82`.
 - Treat humidity as auxiliary process data; it does not drive either 4-20 mA
   output by default.
+
+The detailed integration note is in `docs/htu21d-humidity.md`.
 
 ## Pressure Sensor Handling
 
@@ -293,47 +310,45 @@ The default `0x58` address follows the common GP8302 module/library default.
 Using separate buses avoids an address conflict without adding an I2C mux or
 changing hardware addresses.
 
-Recommended behavior:
+Current behavior and policy:
 
-- Keep `dac-power-gpios` off by default.
-- Power the shared DAC block only when outputs must be refreshed, unless the product
-  requirement says the 4-20 mA loops must remain continuously driven.
-- Map each process value to its own current command:
+- `CONFIG_ARGISENSE_DAC_POWER_DURING_MEASUREMENT` powers the shared DAC block
+  while outputs are refreshed.
+- `CONFIG_ARGISENSE_DAC_POWER_IDLE` decides whether the shared DAC block remains
+  powered between measurement cycles.
+- Runtime settings provide methane range, pressure range, normal current limits,
+  and fault current.
+- Each process value is mapped to its own current command:
 
 ```text
 span = clamp((value - range_low) / (range_high - range_low), 0.0, 1.0)
 current_mA = 4.0 + (span * 16.0)
 ```
 
-- Convert each `current_mA` to the DAC register value using the final DAC
-  resolution and calibration constants from the DAC datasheet.
-- Support fault current policy:
-  - 3.6 mA for sensor fault or under-range
-  - 21.0 mA for over-range or configured alarm
-  - hold-last-value for short transient faults, if required
+- Invalid source values are driven to `dac_fault_current_ua`; the default is
+  3600 microamps.
+- The GP8302 driver converts microamps to a 12-bit raw code and writes channel
+  `0` through the Zephyr DAC API.
 
-Recommended Kconfig or settings fields:
+Current Kconfig defaults feeding runtime settings:
 
 ```text
-dac0_i2c_bus = i2c1
-dac0_i2c_address = 0x58
-dac0_output_source = methane
-dac0_output_range_low
-dac0_output_range_high
-dac1_i2c_bus = i2c2
-dac1_i2c_address = 0x58
-dac1_output_source = pressure
-dac1_output_range_low
-dac1_output_range_high
-fault_current_mode = low | high | hold
-dac_update_period_seconds
+CONFIG_ARGISENSE_DAC_MIN_CURRENT_UA
+CONFIG_ARGISENSE_DAC_MAX_CURRENT_UA
+CONFIG_ARGISENSE_DAC_FAULT_CURRENT_UA
+CONFIG_ARGISENSE_METHANE_DAC_RANGE_LOW_PPM
+CONFIG_ARGISENSE_METHANE_DAC_RANGE_HIGH_PPM
+CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_LOW_PA
+CONFIG_ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
+CONFIG_ARGISENSE_DAC_POWER_DURING_MEASUREMENT
+CONFIG_ARGISENSE_DAC_POWER_IDLE
 ```
 
 ## RS485 Communication
 
 The RS485 interface is connected to `usart2` with hardware DE on `PA1`.
 
-Recommended protocol: Modbus RTU slave.
+Implemented protocol: Modbus RTU slave.
 
 Reasons:
 
@@ -344,84 +359,68 @@ Reasons:
 
 Default electrical and UART setup:
 
-| Setting | Proposed value |
+| Setting | Default/current value |
 | --- | --- |
 | Interface | RS485 half-duplex |
 | UART | `usart2` |
-| Baud rate | 115200 for bring-up, configurable later |
+| Baud rate | 115200 by default, configurable through settings/register `8` |
 | Data format | 8N1 |
 | DE control | STM32 USART hardware DE |
 | Termination | Disabled by default, host configurable |
 
-Proposed register map:
+Implemented holding-register map summary:
 
-| Register | Type | Description |
+| Register block | Access | Description |
 | --- | --- | --- |
-| 0x0000 | Input | Device status bitfield |
-| 0x0001 | Input | Firmware version major/minor |
-| 0x0002 | Input | Uptime low word |
-| 0x0003 | Input | Uptime high word |
-| 0x0010 | Input | Methane value, scaled integer |
-| 0x0011 | Input | Methane status |
-| 0x0020 | Input | Pressure value, scaled integer |
-| 0x0021 | Input | Pressure status |
-| 0x0028 | Input | Relative humidity, `%RH x100` |
-| 0x0029 | Input | HTU21D ambient temperature, millidegrees Celsius |
-| 0x002A | Input | Humidity sensor status |
-| 0x0030 | Input | DAC0 methane current command in microamps |
-| 0x0031 | Input | DAC0 status |
-| 0x0032 | Input | DAC1 pressure current command in microamps |
-| 0x0033 | Input | DAC1 status |
-| 0x0100 | Holding | Modbus slave address |
-| 0x0101 | Holding | RS485 baud preset |
-| 0x0110 | Holding | Measurement period seconds |
-| 0x0120 | Holding | DAC0 range low |
-| 0x0121 | Holding | DAC0 range high |
-| 0x0122 | Holding | DAC1 range low |
-| 0x0123 | Holding | DAC1 range high |
-| 0x0124 | Holding | Fault current mode |
-| 0x0200 | Coil | Force measurement |
-| 0x0201 | Coil | Enable RS485 termination |
-| 0x0202 | Coil | Enable continuous DAC power |
+| `0..19` | R/RW | Device identity, status, serial settings, live methane/pressure values, DAC current commands, sample sequence, and sample uptime |
+| `20..29` | R | MCUboot image version, boot flags, active slot, reboot-required flag, and last command result |
+| `30..33` | R/W | DAC current limits and command register |
+| `40..59` | R/W | Methane/pressure DAC ranges, offsets, and DAC trim placeholders |
+| `70..82` | R | Dynament status/protocol, last sensor errors, MS5803 temperature/raw/CRC diagnostics, and HTU21D humidity/temperature/error diagnostics |
 
-All multi-register values should use a documented endianness. For bring-up,
-prefer signed 32-bit scaled integers split into two 16-bit registers.
+The full register table is maintained in `README.md`. All multi-register values
+use high word first. Masters should read paired 32-bit values in one Modbus
+request, or compare the sample sequence before and after a larger read block.
 
 ## Data Model
 
-Use one central measurement data structure so RS485 and DAC output read from the
-same validated state.
+RS485 and DAC output read from the same validated measurement sample. The
+sample is produced by the measurement loop, then copied into the register
+snapshot by `argisense_register_update_sample()`.
 
-Example fields:
+Current measurement sample fields:
 
 ```c
-struct argisense_measurement {
+struct argisense_measurement_sample {
 	int32_t methane_ppm_x100;
 	int32_t pressure_pa;
+	int32_t methane_last_error;
+	int32_t pressure_last_error;
+	int32_t humidity_last_error;
+	int32_t pressure_temperature_centi_c;
 	int32_t humidity_rh_x100;
-	int32_t board_temp_mc;
-	uint32_t status_flags;
-	uint32_t uptime_ms;
-	int32_t dac_current_ua[2];
+	int32_t humidity_temperature_centi_c;
+	uint32_t pressure_d1_raw;
+	uint32_t pressure_d2_raw;
+	uint16_t methane_status_flags;
+	uint16_t methane_protocol_version;
+	uint8_t pressure_prom_crc_read;
+	uint8_t pressure_prom_crc_calc;
+	bool methane_valid;
+	bool pressure_valid;
+	bool humidity_valid;
 };
 ```
 
-Recommended status flags:
+Holding register `2` currently exposes these status flags:
 
 ```text
 BIT(0) methane_valid
 BIT(1) pressure_valid
-BIT(2) dac0_valid
-BIT(3) dac1_valid
-BIT(4) methane_warmup
-BIT(5) methane_comm_error
-BIT(6) pressure_comm_error
-BIT(7) dac0_alarm
-BIT(8) dac1_alarm
-BIT(9) rail_fault
-BIT(10) calibration_missing
-BIT(11) humidity_valid
-BIT(12) humidity_comm_error
+BIT(2) sample_ready
+BIT(3) rs485_termination_enabled
+BIT(4) humidity_valid
+BIT(5) humidity_error
 ```
 
 ## Power Strategy
@@ -468,7 +467,14 @@ Minimum recommended fault handling:
 
 ## Calibration and Persistent Settings
 
-The schematic includes I2C storage support, so firmware should eventually store:
+The firmware uses Zephyr Settings with the NVS backend in the
+`storage_partition`. Runtime settings are stored under:
+
+```text
+argisense/config
+```
+
+The stored configuration currently includes:
 
 - Methane offset and span calibration.
 - Pressure offset and span calibration.
@@ -476,48 +482,82 @@ The schematic includes I2C storage support, so firmware should eventually store:
 - RS485 address and baud rate.
 - Per-channel output range.
 - Measurement period.
-- Fault-current policy.
+- Measurement window.
+- Methane warm-up and polling periods.
+- HTU21D humidity read period.
+- DAC min, max, and fault current.
+- RS485 termination state.
 
 Recommended storage approach:
 
-- Use Zephyr settings/NVS for generic firmware settings.
-- Add an EEPROM backend only if the product must store settings outside MCU
-  internal flash.
+- Keep Zephyr Settings/NVS as the primary runtime settings backend.
+- Keep AT24C512C available for future factory data, calibration export, or
+  service logs that must live outside internal MCU flash.
+- Add an EEPROM-backed settings mirror only if the product must store runtime
+  settings outside MCU internal flash.
 - Keep a settings version and CRC so invalid calibration can be detected.
 
-## Suggested Implementation Phases
+## External AT24C512C EEPROM
 
-Phase 1 - Board bring-up:
+The schematic includes U4, `AT24C512C-SSHD-T`, connected to `MCU_I2C1_SCL` and
+`MCU_I2C1_SDA`. A0/A1/A2 are strapped for address `0x50`, and the part is
+powered from `+3V3_PRE`.
 
-- Keep the current power manager.
-- Add GPIO self-test logs for each rail.
-- Add I2C scan for `i2c1` and `i2c2`.
-- Add Dynament live-data-simple UART request and parser smoke test.
-- Add HTU21D humidity/temperature mapping check on `i2c2`.
-- Add MS5803 reset, PROM read, CRC check, and ADC conversion read over SPI.
+Firmware mapping:
 
-Phase 2 - Sensor acquisition:
+| Property | Value |
+| --- | --- |
+| DTS alias | `eeprom0` |
+| Compatible | `microchip,24c512`, `atmel,at24` |
+| I2C bus | `i2c1` |
+| I2C address | `0x50` |
+| EEPROM size | 65536 bytes |
+| Page size | 128 bytes |
+| Address width | 16 bits |
+| Write timeout | 5 ms |
 
-- Implement Dynament UART stream parser with DLE byte-stuff handling.
-- Implement pressure sensor driver.
-- Implement HTU21D sample fetch and data-model update.
-- Add measurement data model and status flags.
-- Replace the placeholder measurement window with real sensor reads.
+Boot only checks device readiness and logs the mapping. It does not write to the
+EEPROM. Shell command `argisense eeprom [offset] [length]` temporarily powers
+the measurement rail and reads up to 64 bytes for bring-up diagnostics.
 
-Phase 3 - Outputs:
+## Current Implementation Status
 
-- Implement the two-device GP8302 current DAC driver: DAC0 on `i2c1`, DAC1 on
-  `i2c2`.
-- Add per-channel 4-20 mA scaling and fault current policy.
-- Add RS485 Modbus RTU slave register map.
+Implemented:
 
-Phase 4 - Product behavior:
+- Out-of-tree Zephyr board targets for methane + pressure and future pH
+  hardware profiles.
+- MCUboot/sysbuild image layout with primary slot, secondary slot, and
+  persistent settings storage.
+- Power manager for sensor rails, DAC power, pressure protocol select, RS485
+  termination, and measurement-window sequencing.
+- Zephyr Settings/NVS runtime configuration in `storage_partition`.
+- Dynament Platinum methane Sensor API driver and AN0007 live-data-simple
+  parser.
+- MS5803-05BA pressure Sensor API driver with reset, PROM read, PROM CRC,
+  D1/D2 ADC conversion, and compensated pressure/temperature output.
+- HTU21D Sensor API driver with soft reset, no-hold humidity/temperature
+  conversion, CRC validation, and cached application reads.
+- AT24C512C external EEPROM mapping through Zephyr's standard AT24 EEPROM
+  driver, with read-only ArgiSense shell diagnostics.
+- GP8302 Zephyr DAC driver for two independent current-loop outputs.
+- Modbus RTU register map v3 with live data, settings, MCUboot version fields,
+  commands, and diagnostics.
+- Shell diagnostics for driver readiness, one-shot sensor reads, settings, and
+  register inspection.
 
-- Add calibration storage.
-- Add configurable measurement period.
-- Add watchdog strategy.
-- Add low-power validation on real hardware.
-- Add hardware-in-loop tests for sensor read, RS485, and DAC output.
+Remaining recommended work:
+
+- Validate Dynament byte-stuff handling and timeout behavior on real hardware
+  with long UART captures.
+- Add HTU21D calibration or correction hooks if the final product requires
+  humidity-compensated methane or pressure calculations.
+- Decide whether humidity should become a user-visible primary value, a
+  compensation-only value, or both.
+- Add watchdog behavior and fault escalation after repeated sensor failures.
+- Add hardware-in-loop tests for pressure, methane, humidity, RS485 writes,
+  persistent settings, and DAC current-loop output.
+- Validate current consumption in idle, measurement, RS485-active, and
+  continuous-DAC-output modes.
 
 ## Open Hardware Items
 

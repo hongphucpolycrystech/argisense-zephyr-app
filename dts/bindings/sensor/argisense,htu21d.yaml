@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Measurement Specialties / TE Connectivity HTU21D humidity and temperature
+  sensor on an I2C bus.
+
+compatible: "argisense,htu21d"
+
+include: [sensor-device.yaml, i2c-device.yaml]
+
+properties:
+  part-number:
+    type: string
+    default: "HTU21D"
+    description: Manufacturer orderable part number.
