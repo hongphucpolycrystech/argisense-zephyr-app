@@ -3,6 +3,8 @@
  */
 
 #include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,6 +58,23 @@ struct argisense_shell_dac {
 	uint32_t max_current_ua;
 };
 
+enum argisense_shell_setting_type {
+	ARGISENSE_SHELL_SETTING_U32,
+	ARGISENSE_SHELL_SETTING_I32,
+	ARGISENSE_SHELL_SETTING_U8,
+};
+
+struct argisense_shell_setting {
+	const char *name;
+	const char *alias;
+	size_t offset;
+	enum argisense_shell_setting_type type;
+	int64_t min;
+	int64_t max;
+	const char *unit;
+	bool reboot_required;
+};
+
 static const struct argisense_shell_dac shell_dacs[] = {
 	{
 		.dev = DEVICE_DT_GET(DAC0_NODE),
@@ -74,6 +93,108 @@ static const struct argisense_shell_dac shell_dacs[] = {
 static const struct dac_channel_cfg gp8302_shell_channel_cfg = {
 	.channel_id = 0U,
 	.resolution = 12U,
+};
+
+#define ARGISENSE_SETTING_DESC(_name, _alias, _field, _type, _min, _max, _unit, _reboot) \
+	{ \
+		.name = _name, \
+		.alias = _alias, \
+		.offset = offsetof(struct argisense_runtime_config, _field), \
+		.type = _type, \
+		.min = _min, \
+		.max = _max, \
+		.unit = _unit, \
+		.reboot_required = _reboot, \
+	}
+
+static const struct argisense_shell_setting shell_settings[] = {
+	ARGISENSE_SETTING_DESC("measurement_period_s", "period",
+			       measurement_period_seconds,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       ARGISENSE_MEASUREMENT_PERIOD_SECONDS_MIN,
+			       UINT32_MAX, "s", false),
+	ARGISENSE_SETTING_DESC("measurement_window_ms", "window",
+			       measurement_window_ms,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       ARGISENSE_MEASUREMENT_WINDOW_MS_MIN,
+			       ARGISENSE_MEASUREMENT_WINDOW_MS_MAX, "ms", false),
+	ARGISENSE_SETTING_DESC("methane_warmup_s", "methane_warmup",
+			       methane_warmup_seconds,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       0, 600, "s", false),
+	ARGISENSE_SETTING_DESC("methane_read_ms", "methane_read",
+			       methane_read_period_ms,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       100, 60000, "ms", false),
+	ARGISENSE_SETTING_DESC("humidity_read_s", "humidity_read",
+			       humidity_read_period_seconds,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       1, 86400, "s", false),
+	ARGISENSE_SETTING_DESC("methane_range_low_ppm", "methane_low",
+			       methane_dac_range_low_ppm,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "ppm", false),
+	ARGISENSE_SETTING_DESC("methane_range_high_ppm", "methane_high",
+			       methane_dac_range_high_ppm,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "ppm", false),
+	ARGISENSE_SETTING_DESC("pressure_range_low_pa", "pressure_low",
+			       pressure_dac_range_low_pa,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "Pa", false),
+	ARGISENSE_SETTING_DESC("pressure_range_high_pa", "pressure_high",
+			       pressure_dac_range_high_pa,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "Pa", false),
+	ARGISENSE_SETTING_DESC("dac_min_ua", "dac_min",
+			       dac_min_current_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       0, 25000, "uA", false),
+	ARGISENSE_SETTING_DESC("dac_max_ua", "dac_max",
+			       dac_max_current_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       0, 25000, "uA", false),
+	ARGISENSE_SETTING_DESC("dac_fault_ua", "dac_fault",
+			       dac_fault_current_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       0, 25000, "uA", false),
+	ARGISENSE_SETTING_DESC("methane_zero_offset_ppm_x100", "methane_zero",
+			       methane_zero_offset_ppm_x100,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "ppm_x100", false),
+	ARGISENSE_SETTING_DESC("pressure_offset_pa", "pressure_offset",
+			       pressure_offset_pa,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       INT32_MIN, INT32_MAX, "Pa", false),
+	ARGISENSE_SETTING_DESC("dac0_4ma_trim_ua", "dac0_4ma",
+			       dac0_4ma_trim_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       -2000, 2000, "uA", false),
+	ARGISENSE_SETTING_DESC("dac0_20ma_trim_ua", "dac0_20ma",
+			       dac0_20ma_trim_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       -2000, 2000, "uA", false),
+	ARGISENSE_SETTING_DESC("dac1_4ma_trim_ua", "dac1_4ma",
+			       dac1_4ma_trim_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       -2000, 2000, "uA", false),
+	ARGISENSE_SETTING_DESC("dac1_20ma_trim_ua", "dac1_20ma",
+			       dac1_20ma_trim_ua,
+			       ARGISENSE_SHELL_SETTING_I32,
+			       -2000, 2000, "uA", false),
+	ARGISENSE_SETTING_DESC("rs485_baudrate", "baud",
+			       rs485_baudrate,
+			       ARGISENSE_SHELL_SETTING_U32,
+			       1, UINT32_MAX, "baud", true),
+	ARGISENSE_SETTING_DESC("modbus_address", "address",
+			       modbus_address,
+			       ARGISENSE_SHELL_SETTING_U8,
+			       ARGISENSE_MODBUS_ADDRESS_MIN,
+			       ARGISENSE_MODBUS_ADDRESS_MAX, "", true),
+	ARGISENSE_SETTING_DESC("rs485_termination", "termination",
+			       rs485_termination_enabled,
+			       ARGISENSE_SHELL_SETTING_U8,
+			       0, 1, "", false),
 };
 
 static const char *ready_str(bool ready)
@@ -153,6 +274,22 @@ static int parse_u32_arg(const char *arg, uint32_t *value)
 	return 0;
 }
 
+static int parse_i64_arg(const char *arg, int64_t *value)
+{
+	char *endptr;
+	long long parsed;
+
+	errno = 0;
+	parsed = strtoll(arg, &endptr, 0);
+	if (errno != 0 || endptr == arg || *endptr != '\0') {
+		return -EINVAL;
+	}
+
+	*value = (int64_t)parsed;
+
+	return 0;
+}
+
 static int parse_dac_channel_arg(const char *arg, size_t *index)
 {
 	if (strcmp(arg, "0") == 0 || strcmp(arg, "dac0") == 0 ||
@@ -184,6 +321,84 @@ static uint32_t gp8302_raw_from_current(uint32_t current_ua,
 	return (uint32_t)(((uint64_t)current_ua * GP8302_RAW_MAX +
 			   (max_current_ua / 2U)) /
 			  max_current_ua);
+}
+
+static const struct argisense_shell_setting *find_shell_setting(const char *name)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(shell_settings); i++) {
+		if (strcmp(name, shell_settings[i].name) == 0 ||
+		    (shell_settings[i].alias != NULL &&
+		     strcmp(name, shell_settings[i].alias) == 0)) {
+			return &shell_settings[i];
+		}
+	}
+
+	return NULL;
+}
+
+static int64_t shell_setting_get_value(
+	const struct argisense_runtime_config *config,
+	const struct argisense_shell_setting *setting)
+{
+	const uint8_t *base = (const uint8_t *)config;
+	uint32_t u32_value;
+	int32_t i32_value;
+	uint8_t u8_value;
+
+	switch (setting->type) {
+	case ARGISENSE_SHELL_SETTING_U32:
+		memcpy(&u32_value, base + setting->offset, sizeof(u32_value));
+		return u32_value;
+	case ARGISENSE_SHELL_SETTING_I32:
+		memcpy(&i32_value, base + setting->offset, sizeof(i32_value));
+		return i32_value;
+	case ARGISENSE_SHELL_SETTING_U8:
+		memcpy(&u8_value, base + setting->offset, sizeof(u8_value));
+		return u8_value;
+	default:
+		return 0;
+	}
+}
+
+static void shell_setting_set_value(
+	struct argisense_runtime_config *config,
+	const struct argisense_shell_setting *setting,
+	int64_t value)
+{
+	uint8_t *base = (uint8_t *)config;
+	uint32_t u32_value;
+	int32_t i32_value;
+	uint8_t u8_value;
+
+	switch (setting->type) {
+	case ARGISENSE_SHELL_SETTING_U32:
+		u32_value = (uint32_t)value;
+		memcpy(base + setting->offset, &u32_value, sizeof(u32_value));
+		break;
+	case ARGISENSE_SHELL_SETTING_I32:
+		i32_value = (int32_t)value;
+		memcpy(base + setting->offset, &i32_value, sizeof(i32_value));
+		break;
+	case ARGISENSE_SHELL_SETTING_U8:
+		u8_value = (uint8_t)value;
+		memcpy(base + setting->offset, &u8_value, sizeof(u8_value));
+		break;
+	default:
+		break;
+	}
+}
+
+static void print_shell_setting(const struct shell *shell,
+				const struct argisense_shell_setting *setting,
+				const struct argisense_runtime_config *config)
+{
+	const int64_t value = shell_setting_get_value(config, setting);
+
+	shell_print(shell, "%-32s %12lld %-8s alias=%-16s range=%lld..%lld%s",
+		    setting->name, value, setting->unit,
+		    setting->alias != NULL ? setting->alias : "-",
+		    setting->min, setting->max,
+		    setting->reboot_required ? " reboot-required" : "");
 }
 
 static void print_sensor_value(const struct shell *shell, const char *label,
@@ -566,33 +781,104 @@ static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 				  char **argv)
 {
 	const struct argisense_runtime_config *config = argisense_settings_get();
+	const struct argisense_shell_setting *setting;
+	struct argisense_runtime_config updated;
+	int64_t value;
+	int ret;
 
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
+	if (argc == 1U || (argc == 2U && strcmp(argv[1], "list") == 0)) {
+		shell_print(shell, "schema=%u size=%u", config->schema_version,
+			    config->struct_size);
+		shell_print(shell, "setting                          value        unit     alias            range");
+		shell_print(shell, "-------------------------------------------------------------------------------");
+		for (size_t i = 0U; i < ARRAY_SIZE(shell_settings); i++) {
+			print_shell_setting(shell, &shell_settings[i], config);
+		}
+		shell_print(shell, "");
+		shell_print(shell,
+			    "usage: argisense settings get <name|alias>");
+		shell_print(shell,
+			    "       argisense settings set <name|alias> <value>");
+		shell_print(shell,
+			    "       argisense settings reset");
+		return 0;
+	}
 
-	shell_print(shell, "schema=%u size=%u", config->schema_version,
-		    config->struct_size);
-	shell_print(shell, "measurement period=%u s window=%u ms",
-		    config->measurement_period_seconds,
-		    config->measurement_window_ms);
-	shell_print(shell, "methane warmup=%u s read=%u ms range=%d..%d ppm offset=%d ppm_x100",
-		    config->methane_warmup_seconds,
-		    config->methane_read_period_ms,
-		    config->methane_dac_range_low_ppm,
-		    config->methane_dac_range_high_ppm,
-		    config->methane_zero_offset_ppm_x100);
-	shell_print(shell, "pressure range=%d..%d Pa offset=%d Pa",
-		    config->pressure_dac_range_low_pa,
-		    config->pressure_dac_range_high_pa,
-		    config->pressure_offset_pa);
-	shell_print(shell, "dac current min=%d max=%d fault=%d uA",
-		    config->dac_min_current_ua, config->dac_max_current_ua,
-		    config->dac_fault_current_ua);
-	shell_print(shell, "rs485 address=%u baud=%u termination=%u",
-		    config->modbus_address, config->rs485_baudrate,
-		    config->rs485_termination_enabled);
+	if (argc == 2U && strcmp(argv[1], "reset") == 0) {
+		ret = argisense_settings_reset_defaults();
+		if (ret < 0) {
+			shell_error(shell, "settings reset failed: %d", ret);
+			return ret;
+		}
 
-	return 0;
+		shell_print(shell, "settings reset to defaults and saved to NVS");
+		shell_print(shell,
+			    "note: reboot before relying on changed RS485 address/baudrate");
+		return 0;
+	}
+
+	if ((argc == 2U && strcmp(argv[1], "get") != 0) ||
+	    (argc == 3U && strcmp(argv[1], "get") == 0)) {
+		const char *name = argc == 2U ? argv[1] : argv[2];
+
+		setting = find_shell_setting(name);
+		if (setting == NULL) {
+			shell_error(shell, "unknown setting: %s", name);
+			return -ENOENT;
+		}
+
+		print_shell_setting(shell, setting, config);
+		return 0;
+	}
+
+	if (argc == 4U && strcmp(argv[1], "set") == 0) {
+		setting = find_shell_setting(argv[2]);
+		if (setting == NULL) {
+			shell_error(shell, "unknown setting: %s", argv[2]);
+			return -ENOENT;
+		}
+
+		ret = parse_i64_arg(argv[3], &value);
+		if (ret < 0) {
+			shell_error(shell, "invalid value: %s", argv[3]);
+			return ret;
+		}
+
+		if (value < setting->min || value > setting->max) {
+			shell_error(shell, "%s out of range: %lld not in %lld..%lld",
+				    setting->name, value, setting->min,
+				    setting->max);
+			return -ERANGE;
+		}
+
+		updated = *config;
+		shell_setting_set_value(&updated, setting, value);
+
+		ret = argisense_settings_save(&updated);
+		if (ret < 0) {
+			shell_error(shell,
+				    "settings save rejected %s=%lld: %d",
+				    setting->name, value, ret);
+			shell_error(shell,
+				    "check related limits such as low < high and min < max");
+			return ret;
+		}
+
+		shell_print(shell, "saved %s=%lld %s", setting->name, value,
+			    setting->unit);
+		if (setting->reboot_required) {
+			shell_print(shell,
+				    "note: reboot is required before this RS485 transport setting takes effect");
+		}
+		return 0;
+	}
+
+	shell_error(shell, "usage: argisense settings [list]");
+	shell_error(shell, "       argisense settings [get] <name|alias>");
+	shell_error(shell, "       argisense settings set <name|alias> <value>");
+	shell_error(shell, "       argisense settings reset");
+	return -EINVAL;
+
 }
 
 static int cmd_argisense_eeprom(const struct shell *shell, size_t argc,

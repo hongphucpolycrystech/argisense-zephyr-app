@@ -498,6 +498,19 @@ The stored configuration currently includes:
 - DAC min, max, and fault current.
 - RS485 termination state.
 
+The shell exposes the same runtime record for field service:
+
+```text
+argisense settings list
+argisense settings get <name|alias>
+argisense settings set <name|alias> <value>
+argisense settings reset
+```
+
+Every shell write is validated by the settings module before it is saved to NVS.
+RS485 baudrate and Modbus address writes are persistent immediately, but the
+running RS485 server uses the old transport parameters until the next reboot.
+
 Recommended storage approach:
 
 - Keep Zephyr Settings/NVS as the primary runtime settings backend.

@@ -489,6 +489,10 @@ argisense sensors
 argisense rs485
 argisense rs485 30 3
 argisense settings
+argisense settings get period
+argisense settings set period 30
+argisense settings set methane_high 50000
+argisense settings reset
 ```
 
 - `argisense drivers` prints driver and bus readiness for methane, pressure,
@@ -508,8 +512,13 @@ argisense settings
   registers `40..59`, diagnostics `70..82`, and the RS485 DFU window
   `1000..1035`.
 - `argisense rs485 <start> <count>` dumps a custom holding-register range.
-- `argisense settings` prints the active runtime settings loaded from NVS or
-  defaults.
+- `argisense settings` or `argisense settings list` prints all shell-editable
+  runtime settings loaded from NVS or defaults, including aliases and ranges.
+- `argisense settings get <name|alias>` reads one runtime setting.
+- `argisense settings set <name|alias> <value>` validates and saves one runtime
+  setting to NVS. RS485 baudrate/address changes require reboot before the
+  running Modbus server uses the new transport setting.
+- `argisense settings reset` writes compile-time defaults back to NVS.
 
 `argisense sensors` temporarily powers the measurement rails before reading, so
 the MS5803 pressure sensor can be checked from the shell even while the product
