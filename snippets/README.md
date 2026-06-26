@@ -14,6 +14,7 @@ Available snippets:
 ```text
 argisense-u575-hsi
 argisense-usb-console
+argisense-usb-update
 argisense-usb-console-test
 ```
 
@@ -23,28 +24,42 @@ Build an STM32U575RGT6 ArgiSense board with the internal HSI 16 MHz oscillator i
 py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-u575-hsi argisense-zephyr-app
 ```
 
-Build the ArgiSense application with the USB-C connector as the Zephyr shell
-while keeping console/log output on USART1:
+Build the ArgiSense application with the USB-C connector as the Zephyr console,
+log output, and shell:
 
 ```bat
 py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-usb-console argisense-zephyr-app
 ```
 
 The USB console snippet enables STM32U575 USB FS on PA11/PA12 and routes
-`zephyr,shell-uart` to the CDC ACM UART. It leaves `zephyr,console` and
-`zephyr,log-uart` on USART1 so USB bring-up logs can still be captured when the
-PC does not enumerate the board.
+`zephyr,console` and `zephyr,shell-uart` to one CDC ACM UART.
 
-The HSI and USB console snippets can be combined:
+Build the ArgiSense application with USB-C console plus a second CDC ACM port
+for MCUmgr firmware update:
+
+```bat
+py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-usb-update argisense-zephyr-app
+```
+
+The USB update snippet exposes:
+
+```text
+CDC ACM 0: Zephyr console, log output, and shell
+CDC ACM 1: MCUmgr SMP firmware update transport
+```
+
+The HSI and USB snippets can be combined:
 
 ```bat
 py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-u575-hsi -S argisense-usb-console argisense-zephyr-app
+py -3.12 -m west build -p always -b argisense_mp_u575rg -S argisense-u575-hsi -S argisense-usb-update argisense-zephyr-app
 ```
 
 To build Zephyr's upstream USB console sample with this out-of-tree board, pass
-the board root and use the test overlay. The sample requires
-`zephyr,console` to be a CDC ACM UART, so it cannot use the application
-`argisense-usb-console` snippet:
+the board root and either use the application `argisense-usb-console` snippet
+or the minimal test overlay below. The test overlay is kept so the upstream
+sample can be exercised without pulling in the application's extra USB debug
+configuration:
 
 ```powershell
 cd C:\Users\zephyr44_workspace\zephyr\samples\subsys\usb\console

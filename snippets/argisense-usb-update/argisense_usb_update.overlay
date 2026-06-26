@@ -1,14 +1,16 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  *
- * Route Zephyr console, logs, and shell to the board USB-C connector through
- * USB CDC ACM on STM32U575 USB FS pins PA11/PA12.
+ * USB-C composite profile:
+ * - CDC ACM 0: Zephyr console, log output, and shell.
+ * - CDC ACM 1: MCUmgr SMP firmware update transport.
  */
 
 / {
 	chosen {
 		zephyr,console = &argisense_usb_console_uart;
 		zephyr,shell-uart = &argisense_usb_console_uart;
+		zephyr,uart-mcumgr = &argisense_usb_mcumgr_uart;
 	};
 };
 
@@ -23,5 +25,11 @@ zephyr_udc0: &usbotg_fs {
 
 	argisense_usb_console_uart: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";
+		label = "ArgiSense USB-C console";
+	};
+
+	argisense_usb_mcumgr_uart: cdc_acm_uart1 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ArgiSense USB-C firmware update";
 	};
 };

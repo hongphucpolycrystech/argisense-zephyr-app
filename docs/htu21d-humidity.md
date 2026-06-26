@@ -92,7 +92,7 @@ default. DAC0 remains mapped to methane and DAC1 remains mapped to pressure.
 
 ## RS485 Registers
 
-The register map version is `3`.
+The register map version is `4`.
 
 Register `2` exposes HTU21D state through these status bits:
 

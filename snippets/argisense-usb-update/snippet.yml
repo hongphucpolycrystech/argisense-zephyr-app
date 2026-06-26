@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: argisense-usb-update
+append:
+  EXTRA_CONF_FILE: argisense_usb_update.conf
+  EXTRA_DTC_OVERLAY_FILE: argisense_usb_update.overlay

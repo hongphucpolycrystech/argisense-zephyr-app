@@ -4,6 +4,7 @@
 
 #include "argisense_registers.h"
 
+#include "argisense_dfu.h"
 #include "argisense_settings.h"
 
 #include <errno.h>
@@ -327,6 +328,10 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 
 	firmware_info_get(&firmware_info);
 
+	if (argisense_dfu_register_is_supported(addr)) {
+		return argisense_dfu_register_read(addr, reg);
+	}
+
 	switch (addr) {
 	case ARGISENSE_REG_DEVICE_ID:
 		*reg = ARGISENSE_DEVICE_ID;
@@ -616,6 +621,10 @@ int argisense_register_write_holding(uint16_t addr, uint16_t reg)
 	uint32_t baudrate;
 	int ret;
 
+	if (argisense_dfu_register_is_supported(addr)) {
+		return argisense_dfu_register_write(addr, reg);
+	}
+
 	switch (addr) {
 	case ARGISENSE_REG_MODBUS_ADDRESS:
 		if (reg < ARGISENSE_MODBUS_ADDRESS_MIN ||
@@ -753,6 +762,12 @@ int argisense_register_write_holding(uint16_t addr, uint16_t reg)
 
 const char *argisense_register_holding_name(uint16_t addr)
 {
+	const char *dfu_name = argisense_dfu_register_name(addr);
+
+	if (dfu_name != NULL) {
+		return dfu_name;
+	}
+
 	switch (addr) {
 	case ARGISENSE_REG_DEVICE_ID:
 		return "device_id";

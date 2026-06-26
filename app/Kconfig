@@ -140,6 +140,94 @@ config ARGISENSE_PRESSURE_DAC_RANGE_HIGH_PA
 	help
 	  Pressure value mapped to 20 mA on DAC channel 1.
 
+menu "RS485 firmware update"
+
+config ARGISENSE_RS485_DFU
+	bool "Enable firmware update over RS485 Modbus registers"
+	depends on BOOTLOADER_MCUBOOT
+	depends on IMG_MANAGER
+	depends on FLASH
+	depends on FLASH_MAP
+	depends on STREAM_FLASH
+	default y
+	select IMG_ENABLE_IMAGE_CHECK
+	select IMG_ERASE_PROGRESSIVELY
+	help
+	  Add an ArgiSense Modbus register window that receives signed MCUboot
+	  images over RS485, writes them to the secondary image slot, verifies
+	  the uploaded image hash, and can mark it for a test boot.
+
+config ARGISENSE_RS485_DFU_MAX_CHUNK_BYTES
+	int "Maximum RS485 DFU chunk size in bytes"
+	depends on ARGISENSE_RS485_DFU
+	default 96
+	range 16 128
+	help
+	  Maximum payload bytes accepted by one RS485 DFU write command.
+	  The value must be even because each Modbus holding register carries
+	  two data bytes. 96 bytes fits comfortably inside the Zephyr Modbus
+	  RTU buffer and works well on noisy RS485 links.
+
+endmenu
+
+menu "USB-C device support"
+
+config ARGISENSE_USB_DEVICE
+	bool "Initialize ArgiSense USB device-next composite device"
+	depends on USB_DEVICE_STACK_NEXT
+	depends on USBD_CDC_ACM_CLASS
+	default n
+	help
+	  Initialize the Zephyr USB device-next stack from application code.
+	  This is used by the USB update profile so more than one CDC ACM
+	  function can be registered on the same USB-C connector.
+
+config ARGISENSE_USB_MANUFACTURER_STRING
+	string "USB manufacturer string"
+	depends on ARGISENSE_USB_DEVICE
+	default "ArgiSense"
+	help
+	  USB manufacturer string descriptor used by the ArgiSense USB device.
+
+config ARGISENSE_USB_PRODUCT_STRING
+	string "USB product string"
+	depends on ARGISENSE_USB_DEVICE
+	default "ArgiSense USB-C Console and Firmware Update"
+	help
+	  USB product string descriptor used by the ArgiSense USB device.
+
+config ARGISENSE_USB_VID
+	hex "USB vendor ID"
+	depends on ARGISENSE_USB_DEVICE
+	default 0x2fe3
+	help
+	  USB vendor ID used by the ArgiSense USB device. Replace this before
+	  production if a product-specific VID is assigned.
+
+config ARGISENSE_USB_PID
+	hex "USB product ID"
+	depends on ARGISENSE_USB_DEVICE
+	default 0x0005
+	help
+	  USB product ID used by the ArgiSense USB update profile.
+
+config ARGISENSE_USB_SELF_POWERED
+	bool "Mark USB device as self-powered"
+	depends on ARGISENSE_USB_DEVICE
+	default n
+	help
+	  Set the self-powered attribute in the USB configuration descriptor.
+
+config ARGISENSE_USB_MAX_POWER
+	int "USB maximum power descriptor value"
+	depends on ARGISENSE_USB_DEVICE
+	default 125
+	range 0 250
+	help
+	  USB bMaxPower value in 2 mA units. The default advertises 250 mA.
+
+endmenu
+
 endmenu
 
 menu "Zephyr"

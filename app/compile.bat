@@ -17,6 +17,7 @@ set "SNIPPET_ARGS="
 set "APP_SNIPPET_VALUE="
 set "APP_SYSBUILD_SNIPPET_ARG="
 set "USB_CONSOLE=no"
+set "USB_UPDATE=no"
 set "BUILD_MODE=app"
 set "SYSBUILD_ARGS="
 set "FIRMWARE_VERSION="
@@ -46,7 +47,19 @@ goto :parse_args
 
 set "SNIPPET_ARGS="
 if defined CLOCK_SNIPPET_ARGS set "SNIPPET_ARGS=%SNIPPET_ARGS% %CLOCK_SNIPPET_ARGS%"
-if /I "%USB_CONSOLE%"=="yes" (
+if /I "%USB_UPDATE%"=="yes" (
+	set "USB_CONSOLE=yes"
+	if /I "%BUILD_MODE%"=="mcuboot" (
+		if /I "%CLOCK_SOURCE%"=="hsi" (
+			set "APP_SNIPPET_VALUE=argisense-u575-hsi;argisense-usb-update"
+		) else (
+			set "APP_SNIPPET_VALUE=argisense-usb-update"
+		)
+		set APP_SYSBUILD_SNIPPET_ARG="-D%APP_NAME%_SNIPPET=!APP_SNIPPET_VALUE!"
+	) else (
+		set "SNIPPET_ARGS=%SNIPPET_ARGS% -S argisense-usb-update"
+	)
+) else if /I "%USB_CONSOLE%"=="yes" (
 	if /I "%BUILD_MODE%"=="mcuboot" (
 		if /I "%CLOCK_SOURCE%"=="hsi" (
 			set "APP_SNIPPET_VALUE=argisense-u575-hsi;argisense-usb-console"
@@ -82,6 +95,10 @@ if /I "%FLASH_ONLY%"=="yes" (
 	)
 )
 
+if /I not "%FLASH_ONLY%"=="yes" (
+	call :adjust_pristine_for_cached_snippet
+)
+
 echo.
 echo ArgiSense Zephyr build
 echo ======================
@@ -91,6 +108,7 @@ echo Board     : %BOARD%
 echo Mode      : %BUILD_MODE%
 echo Clock     : %CLOCK_SOURCE%
 echo USB shell : %USB_CONSOLE%
+echo USB update: %USB_UPDATE%
 echo Snippets  : %SNIPPET_ARGS%
 echo App snippet: %APP_SNIPPET_VALUE%
 echo Version   : %FIRMWARE_VERSION%
@@ -100,6 +118,7 @@ echo Flash target: %FLASH_TARGET%
 echo Flash dev : %FLASH_DEV_ID%
 echo SDK       : %ZEPHYR_SDK_INSTALL_DIR%
 echo Pristine  : %PRISTINE%
+if defined PRISTINE_REASON echo Pristine note: %PRISTINE_REASON%
 echo.
 
 if not exist "%WORKSPACE_DIR%\.west" (
@@ -223,7 +242,9 @@ echo   compile.bat
 echo   compile.bat hse
 echo   compile.bat hsi
 echo   compile.bat usbconsole
+echo   compile.bat usbupdate
 echo   compile.bat hsi usbconsole
+echo   compile.bat hsi usbupdate
 echo   compile.bat hsi ^<board^>
 echo   compile.bat ^<board^>
 echo   compile.bat version ^<major.minor.patch+build^>
@@ -238,7 +259,9 @@ echo   compile.bat hsi flash
 echo   compile.bat mcuboot
 echo   compile.bat mcuboot hsi
 echo   compile.bat mcuboot usbconsole
+echo   compile.bat mcuboot usbupdate
 echo   compile.bat mcuboot hsi usbconsole
+echo   compile.bat mcuboot hsi usbupdate
 echo   compile.bat mcuboot hsi ^<board^>
 echo   compile.bat mcuboot hsi version ^<major.minor.patch+build^>
 echo   compile.bat mcuboot hsi version ^<major.minor.patch+build^> flash
@@ -260,14 +283,18 @@ echo Examples:
 echo   compile.bat
 echo   compile.bat hsi
 echo   compile.bat usbconsole
+echo   compile.bat usbupdate
 echo   compile.bat hsi usbconsole
+echo   compile.bat hsi usbupdate
 echo   compile.bat flash-only
 echo   compile.bat flash-all-only
 echo   compile.bat hsi flash
 echo   compile.bat mcuboot
 echo   compile.bat mcuboot hsi
 echo   compile.bat mcuboot usbconsole
+echo   compile.bat mcuboot usbupdate
 echo   compile.bat mcuboot hsi usbconsole
+echo   compile.bat mcuboot hsi usbupdate
 echo   compile.bat version 1.2.0+7
 echo   compile.bat mcuboot hsi version 1.2.0+7
 echo   compile.bat mcuboot hsi version 1.2.0+7 flash
@@ -313,6 +340,16 @@ if /I "%ARG1%"=="usbconsole" (
 )
 if /I "%ARG1%"=="usb-console" (
 	set "USB_CONSOLE=yes"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="usbupdate" (
+	set "USB_UPDATE=yes"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="usb-update" (
+	set "USB_UPDATE=yes"
 	call :shift_args
 	goto :parse_args
 )
@@ -514,6 +551,27 @@ if not defined CURRENT_VERSION_MAJOR exit /b 1
 if not defined CURRENT_VERSION_MINOR exit /b 1
 if not defined CURRENT_VERSION_PATCH exit /b 1
 if not defined CURRENT_VERSION_BUILD exit /b 1
+exit /b 0
+
+:adjust_pristine_for_cached_snippet
+set "PRISTINE_REASON="
+if /I not "%PRISTINE%"=="auto" exit /b 0
+if /I not "%BUILD_MODE%"=="mcuboot" exit /b 0
+if not defined APP_SNIPPET_VALUE exit /b 0
+
+set "APP_CACHE_FILE=%WORKSPACE_DIR%\build\%APP_NAME%\CMakeCache.txt"
+set "CACHED_APP_SNIPPET="
+if not exist "%APP_CACHE_FILE%" exit /b 0
+
+for /f "tokens=2 delims==" %%A in ('findstr /B "CACHED_SNIPPET:STRING=" "%APP_CACHE_FILE%"') do (
+	set "CACHED_APP_SNIPPET=%%A"
+)
+
+if not defined CACHED_APP_SNIPPET exit /b 0
+if /I "%CACHED_APP_SNIPPET%"=="%APP_SNIPPET_VALUE%" exit /b 0
+
+set "PRISTINE=always"
+set "PRISTINE_REASON=app snippet changed from %CACHED_APP_SNIPPET% to %APP_SNIPPET_VALUE%"
 exit /b 0
 
 :version_error

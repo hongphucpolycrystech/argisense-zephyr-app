@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <argisense/drivers/sensor/dynament_platinum.h>
 
@@ -16,6 +17,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/util.h>
 
+#include "argisense_dfu.h"
 #include "argisense_rs485.h"
 #include "argisense_registers.h"
 #include "argisense_settings.h"
@@ -28,6 +30,7 @@
 #define METHANE_NODE DT_ALIAS(methane_sensor)
 #define HUMIDITY_NODE DT_ALIAS(humidity_sensor)
 #define RS485_NODE DT_ALIAS(rs485_uart)
+#define GP8302_RAW_MAX 0x0FFFU
 
 static const struct device *const methane_sensor = DEVICE_DT_GET(METHANE_NODE);
 static const struct device *const methane_uart = DEVICE_DT_GET(DT_BUS(METHANE_NODE));
@@ -45,6 +48,33 @@ static const struct device *const dac1_i2c = DEVICE_DT_GET(DT_BUS(DAC1_NODE));
 static const struct device *const external_eeprom = DEVICE_DT_GET(EEPROM_NODE);
 static const struct i2c_dt_spec external_eeprom_i2c = I2C_DT_SPEC_GET(EEPROM_NODE);
 static const struct device *const rs485_uart = DEVICE_DT_GET(RS485_NODE);
+
+struct argisense_shell_dac {
+	const struct device *dev;
+	struct i2c_dt_spec i2c;
+	const char *label;
+	uint32_t max_current_ua;
+};
+
+static const struct argisense_shell_dac shell_dacs[] = {
+	{
+		.dev = DEVICE_DT_GET(DAC0_NODE),
+		.i2c = I2C_DT_SPEC_GET(DAC0_NODE),
+		.label = "dac0 methane",
+		.max_current_ua = DT_PROP(DAC0_NODE, max_current_microamp),
+	},
+	{
+		.dev = DEVICE_DT_GET(DAC1_NODE),
+		.i2c = I2C_DT_SPEC_GET(DAC1_NODE),
+		.label = "dac1 pressure",
+		.max_current_ua = DT_PROP(DAC1_NODE, max_current_microamp),
+	},
+};
+
+static const struct dac_channel_cfg gp8302_shell_channel_cfg = {
+	.channel_id = 0U,
+	.resolution = 12U,
+};
 
 static const char *ready_str(bool ready)
 {
@@ -121,6 +151,39 @@ static int parse_u32_arg(const char *arg, uint32_t *value)
 	*value = (uint32_t)parsed;
 
 	return 0;
+}
+
+static int parse_dac_channel_arg(const char *arg, size_t *index)
+{
+	if (strcmp(arg, "0") == 0 || strcmp(arg, "dac0") == 0 ||
+	    strcmp(arg, "methane") == 0) {
+		*index = 0U;
+		return 0;
+	}
+
+	if (strcmp(arg, "1") == 0 || strcmp(arg, "dac1") == 0 ||
+	    strcmp(arg, "pressure") == 0) {
+		*index = 1U;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static uint32_t gp8302_raw_from_current(uint32_t current_ua,
+					uint32_t max_current_ua)
+{
+	if (max_current_ua == 0U || current_ua == 0U) {
+		return 0U;
+	}
+
+	if (current_ua >= max_current_ua) {
+		return GP8302_RAW_MAX;
+	}
+
+	return (uint32_t)(((uint64_t)current_ua * GP8302_RAW_MAX +
+			   (max_current_ua / 2U)) /
+			  max_current_ua);
 }
 
 static void print_sensor_value(const struct shell *shell, const char *label,
@@ -201,6 +264,125 @@ static int cmd_argisense_drivers(const struct shell *shell, size_t argc,
 	shell_print(shell, "");
 	shell_print(shell,
 		    "note: driver=Zephyr device init status; probe=I2C address ACK while measurement rails are on.");
+
+	return 0;
+}
+
+static int write_dac_raw(const struct shell *shell,
+			 const struct argisense_shell_dac *dac,
+			 uint32_t raw)
+{
+	int ret;
+
+	if (!device_is_ready(dac->i2c.bus)) {
+		shell_error(shell, "%s I2C bus %s is not ready", dac->label,
+			    dac->i2c.bus->name);
+		return -ENODEV;
+	}
+
+	if (!device_is_ready(dac->dev)) {
+		shell_error(shell, "%s device %s is not ready", dac->label,
+			    dac->dev->name);
+		return -ENODEV;
+	}
+
+	ret = dac_channel_setup(dac->dev, &gp8302_shell_channel_cfg);
+	if (ret < 0) {
+		shell_error(shell, "%s channel setup failed: %d", dac->label,
+			    ret);
+		return ret;
+	}
+
+	argisense_power_measurement_lock();
+	ret = argisense_power_measurement_on();
+	if (ret < 0) {
+		argisense_power_measurement_unlock();
+		shell_error(shell, "failed to power DAC/measurement rails: %d",
+			    ret);
+		return ret;
+	}
+
+	ret = dac_write_value(dac->dev, 0U, raw);
+	argisense_power_idle_state();
+	argisense_power_measurement_unlock();
+	if (ret < 0) {
+		shell_error(shell, "%s write failed: %d", dac->label, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int cmd_argisense_dac(const struct shell *shell, size_t argc,
+			     char **argv)
+{
+	const struct argisense_shell_dac *dac;
+	uint32_t value;
+	uint32_t raw;
+	size_t index;
+	bool raw_mode = false;
+	int ret;
+
+	if (argc >= 2U && strcmp(argv[1], "raw") == 0) {
+		raw_mode = true;
+	}
+
+	if ((!raw_mode && argc != 3U) || (raw_mode && argc != 4U)) {
+		shell_error(shell,
+			    "usage: argisense dac <0|1|methane|pressure> <current-uA>");
+		shell_error(shell,
+			    "       argisense dac raw <0|1|methane|pressure> <0..4095>");
+		return -EINVAL;
+	}
+
+	ret = parse_dac_channel_arg(raw_mode ? argv[2] : argv[1], &index);
+	if (ret < 0 || index >= ARRAY_SIZE(shell_dacs)) {
+		shell_error(shell, "invalid DAC channel: %s",
+			    raw_mode ? argv[2] : argv[1]);
+		return -EINVAL;
+	}
+
+	ret = parse_u32_arg(raw_mode ? argv[3] : argv[2], &value);
+	if (ret < 0) {
+		shell_error(shell, "invalid DAC value: %s",
+			    raw_mode ? argv[3] : argv[2]);
+		return ret;
+	}
+
+	dac = &shell_dacs[index];
+	if (raw_mode) {
+		if (value > GP8302_RAW_MAX) {
+			shell_error(shell, "raw DAC value must be <= %u",
+				    GP8302_RAW_MAX);
+			return -EINVAL;
+		}
+		raw = value;
+	} else {
+		if (value > dac->max_current_ua) {
+			shell_error(shell,
+				    "current must be <= %u uA for %s",
+				    dac->max_current_ua, dac->label);
+			return -EINVAL;
+		}
+		raw = gp8302_raw_from_current(value, dac->max_current_ua);
+	}
+
+	ret = write_dac_raw(shell, dac, raw);
+	if (ret < 0) {
+		return ret;
+	}
+
+	if (raw_mode) {
+		shell_print(shell, "%s wrote raw=0x%03x (%u)",
+			    dac->label, raw, raw);
+	} else {
+		shell_print(shell,
+			    "%s wrote current=%u uA raw=0x%03x max=%u uA",
+			    dac->label, value, raw, dac->max_current_ua);
+	}
+
+	shell_print(shell,
+		    "DAC rail returned to idle policy; periodic measurement may overwrite this test output.");
 
 	return 0;
 }
@@ -371,6 +553,10 @@ static int cmd_argisense_rs485(const struct shell *shell, size_t argc,
 		dump_rs485_range(shell, 40U, 20U);
 		shell_print(shell, "");
 		dump_rs485_range(shell, 70U, 13U);
+#if defined(CONFIG_ARGISENSE_RS485_DFU)
+		shell_print(shell, "");
+		dump_rs485_range(shell, ARGISENSE_DFU_REG_CONTROL, 36U);
+#endif
 	}
 
 	return 0;
@@ -482,6 +668,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	argisense_cmds,
 	SHELL_CMD(drivers, NULL, "Show ArgiSense driver/device readiness.",
 		  cmd_argisense_drivers),
+	SHELL_CMD(dac, NULL,
+		  "Write GP8302 output: dac <ch> <uA> or dac raw <ch> <raw>.",
+		  cmd_argisense_dac),
 	SHELL_CMD(eeprom, NULL, "Read AT24C512C EEPROM: eeprom [offset] [length].",
 		  cmd_argisense_eeprom),
 	SHELL_CMD(sensors, NULL, "Fetch and print methane, pressure, and humidity.",

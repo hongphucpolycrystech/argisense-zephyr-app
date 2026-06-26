@@ -38,4 +38,10 @@ target_sources(app PRIVATE
   app/src/argisense_rs485.c
   app/src/argisense_shell.c
 )
+target_sources_ifdef(CONFIG_ARGISENSE_RS485_DFU app PRIVATE
+  app/src/argisense_dfu.c
+)
+target_sources_ifdef(CONFIG_ARGISENSE_USB_DEVICE app PRIVATE
+  app/src/argisense_usb.c
+)
 argisense_add_module_subdirs()

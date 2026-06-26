@@ -135,6 +135,11 @@ static void argisense_usb_shell_diagnostics(void)
 		CONFIG_CDC_ACM_SERIAL_PID,
 		IS_ENABLED(CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT) ? "yes" : "no",
 		IS_ENABLED(CONFIG_CDC_ACM_SERIAL_ENABLE_AT_BOOT) ? "yes" : "no");
+#elif defined(CONFIG_ARGISENSE_USB_PRODUCT_STRING)
+	LOG_INF("USB CDC product='%s' pid=0x%04x app-composite-init=%s",
+		CONFIG_ARGISENSE_USB_PRODUCT_STRING,
+		CONFIG_ARGISENSE_USB_PID,
+		IS_ENABLED(CONFIG_ARGISENSE_USB_DEVICE) ? "yes" : "no");
 #endif
 
 	if (!device_is_ready(shell_uart)) {
@@ -151,6 +156,29 @@ static void argisense_usb_shell_diagnostics(void)
 	}
 #else
 	LOG_INF("USB CDC shell is not selected in DTS");
+#endif
+
+#if DT_HAS_CHOSEN(zephyr_uart_mcumgr)
+	const struct device *const mcumgr_uart =
+		DEVICE_DT_GET(DT_CHOSEN(zephyr_uart_mcumgr));
+	uint32_t mcumgr_dtr = 0U;
+	int mcumgr_ret;
+
+	LOG_INF("USB CDC MCUmgr update selected: device=%s ready=%s",
+		mcumgr_uart->name, device_is_ready(mcumgr_uart) ? "yes" : "no");
+
+	if (device_is_ready(mcumgr_uart)) {
+		mcumgr_ret = uart_line_ctrl_get(mcumgr_uart, UART_LINE_CTRL_DTR,
+						&mcumgr_dtr);
+		if (mcumgr_ret == 0) {
+			LOG_INF("USB CDC MCUmgr DTR=%u; open this COM port with mcumgr",
+				(unsigned int)mcumgr_dtr);
+		} else {
+			LOG_WRN("USB CDC MCUmgr DTR read failed: %d", mcumgr_ret);
+		}
+	}
+#else
+	LOG_INF("USB CDC MCUmgr update UART is not selected in DTS");
 #endif
 }
 
