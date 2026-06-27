@@ -100,6 +100,7 @@ Current split:
 | Settings | `app/src/argisense_settings.c` | Loads and saves runtime configuration through Zephyr Settings/NVS |
 | Register model | `app/src/argisense_registers.c` | Owns the Modbus holding-register map and coherent measurement snapshots |
 | RS485 service | `app/src/argisense_rs485.c` | Starts the Zephyr Modbus RTU server and forwards reads/writes to the register model |
+| USB-C service | `app/src/argisense_usb.c`, `snippets/argisense-usb-update` | Owns the composite CDC ACM USB device profile for console, shell, and MCUmgr firmware update |
 | Shell diagnostics | `app/src/argisense_shell.c` | Provides driver, sensor, settings, and register inspection commands |
 | Current-loop output | `app/src/current_loop_output.c` | Converts methane and pressure process values to GP8302 current commands |
 | Methane driver | `drivers/sensor/dynament_platinum` | Dynament UART live-data-simple request/parser exposed through Zephyr Sensor API |
@@ -120,6 +121,7 @@ app/src/argisense_registers.c
 app/src/argisense_registers.h
 app/src/argisense_rs485.c
 app/src/argisense_rs485.h
+app/src/argisense_usb.c
 app/src/argisense_shell.c
 app/src/current_loop_output.c
 app/src/current_loop_output.h
@@ -128,6 +130,9 @@ drivers/sensor/ms5803_05ba/
 drivers/sensor/htu21d/
 drivers/dac/
 dts/bindings/sensor/argisense,htu21d.yaml
+snippets/argisense-usb-update/
+tools/usb_mcumgr/
+tools/rs485_dfu/
 ```
 
 ## Measurement Cycle
@@ -392,6 +397,50 @@ and SHA-256, then can mark the verified image for a test swap and reboot. MCUboo
 performs the swap on the next boot, and the application confirms the image after
 bring-up checks pass.
 
+## USB-C Firmware Update and Service Console
+
+The board USB-C connector can be built as a service connector during bring-up
+and factory work. Build with the `argisense-usb-update` snippet or the
+`usbupdate` helper-script option to enable a composite USB CDC ACM device:
+
+```text
+CDC ACM 0: Zephyr console, log output, and shell
+CDC ACM 1: MCUmgr SMP firmware update transport
+```
+
+The MCUmgr port uploads the MCUboot signed binary to the secondary image slot:
+
+```bat
+mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image list
+mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image upload build\argisense-zephyr-app\zephyr\zephyr.signed.bin --noerase=false
+mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image test <new-image-hash>
+mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" reset
+```
+
+The repository also provides a Python/Tkinter GUI for this USB-C update path:
+
+```powershell
+py -3.12 -m pip install -r argisense-zephyr-app\tools\usb_mcumgr\requirements.txt
+py -3.12 argisense-zephyr-app\tools\usb_mcumgr\argisense_usb_mcumgr_gui.py
+```
+
+The GUI selects the MCUmgr CDC ACM port, probes `image list`, parses the selected
+signed image header, shows image version and size, runs upload/test/reset, and
+tracks progress from `mcumgr image upload`. Keep `Erase secondary slot before
+upload` enabled during normal field service. That option passes `--noerase=false`
+to `mcumgr` and avoids stale data in the secondary slot.
+
+The USB update snippet disables the `mcumgr_img_grp` log module because Zephyr's
+optional upload `match` check can print a misleading SHA-256 error when the full
+file hash and MCUboot image hash differ. The image can still be accepted and
+booted by MCUboot. RS485 DFU keeps explicit CRC32 and SHA-256 verification
+enabled in the application path.
+
+Current bring-up policy is rollback-friendly: MCUboot downgrade prevention is
+disabled in sysbuild so field service can install an older known-good firmware
+when needed. Production builds can re-enable downgrade prevention after the
+final update policy is fixed.
+
 ## Data Model
 
 RS485 and DAC output read from the same validated measurement sample. The
@@ -565,9 +614,14 @@ Implemented:
 - GP8302 Zephyr DAC driver for two independent current-loop outputs.
 - Modbus RTU register map v4 with live data, settings, MCUboot version fields,
   commands, diagnostics, and RS485 MCUboot image upload support.
+- USB-C composite CDC ACM profile for console/shell plus MCUmgr firmware update
+  through the `argisense-usb-update` snippet.
 - Shell diagnostics for driver readiness, one-shot sensor reads, settings, and
   register inspection.
 - Python/Tkinter RS485 DFU GUI under `tools/rs485_dfu`.
+- Python/Tkinter USB-C MCUmgr GUI under `tools/usb_mcumgr`.
+- Rollback-friendly MCUboot/sysbuild policy for bring-up and field service, with
+  downgrade prevention currently disabled.
 
 Remaining recommended work:
 
@@ -580,6 +634,7 @@ Remaining recommended work:
 - Add watchdog behavior and fault escalation after repeated sensor failures.
 - Add hardware-in-loop tests for pressure, methane, humidity, RS485 writes,
   persistent settings, and DAC current-loop output.
+- Decide the final production firmware rollback/downgrade policy before release.
 - Validate current consumption in idle, measurement, RS485-active, and
   continuous-DAC-output modes.
 

@@ -178,7 +178,7 @@ MCUboot sysbuild:
 
 ```bat
 mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image list
-mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image upload build\argisense-zephyr-app\zephyr\zephyr.signed.bin
+mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image upload build\argisense-zephyr-app\zephyr\zephyr.signed.bin --noerase=false
 mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image list
 mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" image test <new-image-hash>
 mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" reset
@@ -192,6 +192,29 @@ On the current Windows bring-up machine, the MCUmgr update interface enumerated
 as `COM24` (`VID_2FE3&PID_0005&MI_02`) and responded to `image list` and
 `echo`; a full `zephyr.signed.bin` upload to slot 1 completed successfully.
 `mtu=256` timed out, while `mtu=128` worked.
+
+A small Python GUI is also available for this USB-C update flow:
+
+```powershell
+cd C:\Users\zephyr44_workspace
+py -3.12 -m pip install -r argisense-zephyr-app\tools\usb_mcumgr\requirements.txt
+py -3.12 argisense-zephyr-app\tools\usb_mcumgr\argisense_usb_mcumgr_gui.py
+```
+
+In the GUI, select the MCUmgr CDC ACM port, for example `COM24`, keep
+`baud=115200` and `mtu=128`, select
+`build\argisense-zephyr-app\zephyr\zephyr.signed.bin`, then use
+`Upload + Test + Reset`. Keep `Erase secondary slot before upload` enabled; it
+passes `--noerase=false` to `mcumgr image upload` and avoids SHA256 verification
+failures caused by stale partial data in the secondary slot. The progress bar
+follows the percentage reported by `mcumgr image upload`. The GUI can confirm
+the active image after the board reboots so MCUboot keeps the new firmware on
+later resets.
+
+The USB update snippet disables the `mcumgr_img_grp` log module because Zephyr's
+optional upload `match` check can print a false SHA256 error even when MCUboot
+accepts and boots the uploaded image. RS485 DFU keeps its explicit CRC32 and
+SHA-256 verification path.
 
 ## RS485 Firmware Update
 
