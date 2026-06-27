@@ -7,12 +7,18 @@
 
 #include <stdint.h>
 
-#define ARGISENSE_SETTINGS_SCHEMA_VERSION 1U
+#define ARGISENSE_SETTINGS_SCHEMA_VERSION 2U
 #define ARGISENSE_MODBUS_ADDRESS_MIN 1U
 #define ARGISENSE_MODBUS_ADDRESS_MAX 247U
 #define ARGISENSE_MEASUREMENT_PERIOD_SECONDS_MIN 1U
 #define ARGISENSE_MEASUREMENT_WINDOW_MS_MIN 1U
 #define ARGISENSE_MEASUREMENT_WINDOW_MS_MAX 60000U
+#define ARGISENSE_RS485_PARITY_NONE 0U
+#define ARGISENSE_RS485_PARITY_ODD 1U
+#define ARGISENSE_RS485_PARITY_EVEN 2U
+#define ARGISENSE_RS485_STOP_BITS_1 1U
+#define ARGISENSE_RS485_STOP_BITS_2 2U
+#define ARGISENSE_RS485_DATA_BITS_8 8U
 
 struct argisense_runtime_config {
 	uint16_t schema_version;
@@ -38,7 +44,10 @@ struct argisense_runtime_config {
 	uint32_t rs485_baudrate;
 	uint8_t modbus_address;
 	uint8_t rs485_termination_enabled;
-	uint8_t reserved[2];
+	uint8_t rs485_parity;
+	uint8_t rs485_stop_bits;
+	uint8_t rs485_data_bits;
+	uint8_t reserved[3];
 };
 
 int argisense_settings_init(void);

@@ -251,10 +251,25 @@ py -3.12 -m pip install -r argisense-zephyr-app\tools\rs485_dfu\requirements.txt
 py -3.12 argisense-zephyr-app\tools\rs485_dfu\argisense_rs485_dfu_gui.py
 ```
 
-In the GUI, select the USB-to-RS485 adapter COM port, the current Modbus baudrate
-and unit ID, then select `zephyr.signed.bin`. The default RS485 DFU chunk size is
-96 bytes, which fits Zephyr's Modbus RTU buffer with margin. Use `Probe` first
-to confirm the unit responds and to read the firmware-reported maximum chunk.
+The same GUI is the RS485 service tool for sealed-device work. Use `Auto
+Detect` to scan the selected adapter or all available COM ports, baud presets,
+data bits, parity, stop bits, and Unit IDs until an ArgiSense device responds
+with device ID `0xA651`. The default `Scan IDs` range is `1-10,247`; use
+`1-247` when the full RS485 network must be searched. Manual connection is also
+available by selecting the USB-to-RS485 adapter COM port, the current Modbus
+baudrate, data bits, parity, stop bits, and unit ID. Then use:
+
+- `Firmware Update` to select `zephyr.signed.bin`, upload it, verify it, and
+  optionally reboot into the MCUboot test image.
+- `Sensors` to read methane, pressure, humidity, temperature, DAC current,
+  status, sample sequence, and uptime. This tab can poll continuously and draw
+  an auto-scaled trend graph.
+- `Device Config` to read and write unit ID, baud preset, data bits, parity,
+  stop bits, RS485 termination, measurement timing, and DAC current limits.
+
+The default RS485 DFU chunk size is 96 bytes, which fits Zephyr's Modbus RTU
+buffer with margin. Use `Probe` first to confirm the unit responds and to read
+the firmware-reported maximum chunk.
 
 The RS485 DFU holding-register window starts at address `1000`; it is documented
 in `tools/rs485_dfu/README.md`. You can inspect DFU state from the device shell:
@@ -439,7 +454,8 @@ The stored record currently contains:
 - DAC 4-20 mA current limits and fault current.
 - Methane and pressure calibration offsets.
 - DAC channel trim placeholders.
-- RS485 baudrate, Modbus address, and software-controlled termination.
+- RS485 baudrate, data bits, parity, stop bits, Modbus address, and
+  software-controlled termination.
 
 On a fresh board, the firmware loads compile-time defaults from Kconfig, writes
 one default `argisense/config` record into NVS, then uses that runtime
@@ -531,7 +547,7 @@ argisense settings reset
   EEPROM for bring-up diagnostics.
 - `argisense sensors` performs a one-shot read of Dynament methane, MS5803
   pressure/temperature, and HTU21D humidity/temperature.
-- `argisense rs485` dumps live/control registers `0..33`, configuration
+- `argisense rs485` dumps live/control registers `0..36`, configuration
   registers `40..59`, diagnostics `70..82`, and the RS485 DFU window
   `1000..1035`.
 - `argisense rs485 <start> <count>` dumps a custom holding-register range.
@@ -539,8 +555,9 @@ argisense settings reset
   runtime settings loaded from NVS or defaults, including aliases and ranges.
 - `argisense settings get <name|alias>` reads one runtime setting.
 - `argisense settings set <name|alias> <value>` validates and saves one runtime
-  setting to NVS. RS485 baudrate/address changes require reboot before the
-  running Modbus server uses the new transport setting.
+  setting to NVS. RS485 baudrate/data-bit/parity/stop-bit/address changes
+  require reboot before the running Modbus server uses the new transport
+  setting.
 - `argisense settings reset` writes compile-time defaults back to NVS.
 
 `argisense sensors` temporarily powers the measurement rails before reading, so
@@ -573,16 +590,26 @@ Default serial settings:
 
 - Unit ID: `1`
 - Baudrate: `115200`
-- Parity: none
-- Stop bits: Modbus-compliant setting selected by Zephyr for RTU/no parity
+- Data bits: `8`
+- Parity: `0=none`
+- Stop bits: `2`, matching Modbus RTU no-parity framing. Set stop bits to `1`
+  if the field adapter/master must use 8N1.
 
-Holding register map v4, high word first for 32-bit values. Signed values and
+RS485 serial format settings are encoded as:
+
+| Setting | Values |
+| --- | --- |
+| Data bits | `8` only for the current Modbus RTU implementation |
+| Parity | `0=none`, `1=odd`, `2=even` |
+| Stop bits | `1` or `2` |
+
+Holding register map v6, high word first for 32-bit values. Signed values and
 error codes use two's-complement representation.
 
 | Address | Access | Description |
 | --- | --- | --- |
 | `0` | R | Device ID, fixed `0xA651` |
-| `1` | R | Register map version, currently `4` |
+| `1` | R | Register map version, currently `6` |
 | `2` | R | Status flags: bit0 methane valid, bit1 pressure valid, bit2 sample ready, bit3 RS485 termination enabled, bit4 humidity valid, bit5 humidity error |
 | `3` | R/W | Modbus unit address, `1..247`; takes effect after reboot |
 | `4` | R | RS485 baudrate high word |
@@ -603,13 +630,16 @@ error codes use two's-complement representation.
 | `23..24` | R | Firmware build number from MCUboot image header |
 | `25` | R | Boot flags: bit0 MCUboot enabled, bit1 image confirmed, bit2 image header valid, bit3 reboot required |
 | `26` | R | Active MCUboot slot, or `0xFFFF` if unknown |
-| `27` | R | Reboot-required flag, set after address/baud/default reset changes |
+| `27` | R | Reboot-required flag, set after address/baud/data-bit/parity/stop-bit/default reset changes |
 | `28` | R | Last command value written to register `33` |
 | `29` | R | Last command result as signed errno-style code |
 | `30` | R/W | DAC normal minimum current in microamps |
 | `31` | R/W | DAC normal maximum current in microamps |
 | `32` | R/W | DAC fault current in microamps |
 | `33` | W | Command register: `0xA551=reboot`, `0xA552=reset settings defaults`, `0xA553=confirm MCUboot image` |
+| `34` | R/W | RS485 parity: `0=none`, `1=odd`, `2=even`; takes effect after reboot |
+| `35` | R/W | RS485 stop bits: `1` or `2`; takes effect after reboot |
+| `36` | R/W | RS485 data bits: currently only `8` is accepted for Modbus RTU |
 | `40..41` | R/W | Methane DAC low range, signed ppm |
 | `42..43` | R/W | Methane DAC high range, signed ppm |
 | `44..45` | R/W | Pressure DAC low range, signed Pa |
@@ -660,9 +690,10 @@ Writable registers are stored through Zephyr Settings/NVS in the
 `storage_partition`. Unsupported addresses or invalid values return a Modbus
 exception.
 
-Changing the Modbus unit address or baud preset updates NVS immediately, but the
-running Modbus server continues on the old address/baud until reboot. Read
-register `27` or boot flag bit3 to know when a reboot is required.
+Changing the Modbus unit address, baud preset, data-bit, parity, or stop-bit
+setting updates NVS immediately, but the running Modbus server continues on the
+old transport settings until reboot. Read register `27` or boot flag bit3 to
+know when a reboot is required.
 
 For coherent multi-word values, read both 16-bit words in one Modbus request.
 The `sample_sequence` registers can also be read before and after a larger block

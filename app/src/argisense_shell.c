@@ -186,6 +186,21 @@ static const struct argisense_shell_setting shell_settings[] = {
 			       rs485_baudrate,
 			       ARGISENSE_SHELL_SETTING_U32,
 			       1, UINT32_MAX, "baud", true),
+	ARGISENSE_SETTING_DESC("rs485_parity", "parity",
+			       rs485_parity,
+			       ARGISENSE_SHELL_SETTING_U8,
+			       ARGISENSE_RS485_PARITY_NONE,
+			       ARGISENSE_RS485_PARITY_EVEN, "code", true),
+	ARGISENSE_SETTING_DESC("rs485_stop_bits", "stop",
+			       rs485_stop_bits,
+			       ARGISENSE_SHELL_SETTING_U8,
+			       ARGISENSE_RS485_STOP_BITS_1,
+			       ARGISENSE_RS485_STOP_BITS_2, "bits", true),
+	ARGISENSE_SETTING_DESC("rs485_data_bits", "databits",
+			       rs485_data_bits,
+			       ARGISENSE_SHELL_SETTING_U8,
+			       ARGISENSE_RS485_DATA_BITS_8,
+			       ARGISENSE_RS485_DATA_BITS_8, "bits", true),
 	ARGISENSE_SETTING_DESC("modbus_address", "address",
 			       modbus_address,
 			       ARGISENSE_SHELL_SETTING_U8,
@@ -735,7 +750,7 @@ static int cmd_argisense_rs485(const struct shell *shell, size_t argc,
 			       char **argv)
 {
 	uint16_t start = 0U;
-	uint16_t count = 34U;
+	uint16_t count = 37U;
 	int ret;
 
 	if (argc > 3U) {
@@ -796,6 +811,8 @@ static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 		}
 		shell_print(shell, "");
 		shell_print(shell,
+			    "rs485_data_bits is fixed at 8 for Modbus RTU; parity codes: 0=none, 1=odd, 2=even; stop bits: 1 or 2");
+		shell_print(shell,
 			    "usage: argisense settings get <name|alias>");
 		shell_print(shell,
 			    "       argisense settings set <name|alias> <value>");
@@ -813,7 +830,7 @@ static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 
 		shell_print(shell, "settings reset to defaults and saved to NVS");
 		shell_print(shell,
-			    "note: reboot before relying on changed RS485 address/baudrate");
+			    "note: reboot before relying on changed RS485 transport settings");
 		return 0;
 	}
 

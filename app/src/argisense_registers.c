@@ -55,6 +55,9 @@ enum argisense_holding_register {
 	ARGISENSE_REG_DAC_MAX_CURRENT_UA = 31,
 	ARGISENSE_REG_DAC_FAULT_CURRENT_UA = 32,
 	ARGISENSE_REG_COMMAND = 33,
+	ARGISENSE_REG_RS485_PARITY = 34,
+	ARGISENSE_REG_RS485_STOP_BITS = 35,
+	ARGISENSE_REG_RS485_DATA_BITS = 36,
 	ARGISENSE_REG_METHANE_RANGE_LOW_HI = 40,
 	ARGISENSE_REG_METHANE_RANGE_LOW_LO = 41,
 	ARGISENSE_REG_METHANE_RANGE_HIGH_HI = 42,
@@ -437,6 +440,15 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 	case ARGISENSE_REG_COMMAND:
 		*reg = ARGISENSE_REGISTER_COMMAND_NONE;
 		return 0;
+	case ARGISENSE_REG_RS485_PARITY:
+		*reg = config->rs485_parity;
+		return 0;
+	case ARGISENSE_REG_RS485_STOP_BITS:
+		*reg = config->rs485_stop_bits;
+		return 0;
+	case ARGISENSE_REG_RS485_DATA_BITS:
+		*reg = config->rs485_data_bits;
+		return 0;
 	case ARGISENSE_REG_METHANE_RANGE_LOW_HI:
 		*reg = reg_i32_hi(config->methane_dac_range_low_ppm);
 		return 0;
@@ -685,6 +697,43 @@ int argisense_register_write_holding(uint16_t addr, uint16_t reg)
 		return save_config(&config, "dac-fault-current-ua");
 	case ARGISENSE_REG_COMMAND:
 		return handle_command(reg);
+	case ARGISENSE_REG_RS485_PARITY:
+		if (reg > ARGISENSE_RS485_PARITY_EVEN) {
+			return -EINVAL;
+		}
+
+		config.rs485_parity = (uint8_t)reg;
+		ret = save_config(&config, "rs485-parity");
+		if (ret == 0) {
+			reboot_required = true;
+			LOG_INF("New RS485 parity will be used after reboot");
+		}
+		return ret;
+	case ARGISENSE_REG_RS485_STOP_BITS:
+		if (reg != ARGISENSE_RS485_STOP_BITS_1 &&
+		    reg != ARGISENSE_RS485_STOP_BITS_2) {
+			return -EINVAL;
+		}
+
+		config.rs485_stop_bits = (uint8_t)reg;
+		ret = save_config(&config, "rs485-stop-bits");
+		if (ret == 0) {
+			reboot_required = true;
+			LOG_INF("New RS485 stop-bit setting will be used after reboot");
+		}
+		return ret;
+	case ARGISENSE_REG_RS485_DATA_BITS:
+		if (reg != ARGISENSE_RS485_DATA_BITS_8) {
+			return -EINVAL;
+		}
+
+		config.rs485_data_bits = (uint8_t)reg;
+		ret = save_config(&config, "rs485-data-bits");
+		if (ret == 0) {
+			reboot_required = true;
+			LOG_INF("New RS485 data-bit setting will be used after reboot");
+		}
+		return ret;
 	case ARGISENSE_REG_METHANE_RANGE_LOW_HI:
 		return save_i32_config_word(&config,
 					    &config.methane_dac_range_low_ppm,
@@ -837,6 +886,12 @@ const char *argisense_register_holding_name(uint16_t addr)
 		return "dac_fault_current_ua";
 	case ARGISENSE_REG_COMMAND:
 		return "command";
+	case ARGISENSE_REG_RS485_PARITY:
+		return "rs485_parity";
+	case ARGISENSE_REG_RS485_STOP_BITS:
+		return "rs485_stop_bits";
+	case ARGISENSE_REG_RS485_DATA_BITS:
+		return "rs485_data_bits";
 	case ARGISENSE_REG_METHANE_RANGE_LOW_HI:
 		return "methane_range_low_hi";
 	case ARGISENSE_REG_METHANE_RANGE_LOW_LO:

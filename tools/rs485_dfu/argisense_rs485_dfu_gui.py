@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
-"""ArgiSense RS485 firmware update GUI.
+"""ArgiSense RS485 service GUI.
 
-This tool uploads an MCUboot signed binary to the ArgiSense secondary image
-slot through the custom Modbus holding-register DFU window.
+This tool monitors ArgiSense measurements, edits runtime configuration, and
+uploads an MCUboot signed binary through the external RS485 Modbus RTU port.
 """
 
 from __future__ import annotations
@@ -49,6 +49,37 @@ DFU_REG_SHA256_BASE = 1020
 DFU_REG_SHA256_COUNT = 16
 DFU_REG_DATA_BASE = 1100
 
+REG_DEVICE_ID = 0
+REG_MAP_VERSION = 1
+REG_STATUS_FLAGS = 2
+REG_MODBUS_ADDRESS = 3
+REG_BAUDRATE_HI = 4
+REG_BAUDRATE_LO = 5
+REG_MEASUREMENT_PERIOD_SECONDS = 6
+REG_MEASUREMENT_WINDOW_MS = 7
+REG_BAUD_PRESET = 8
+REG_TERMINATION_ENABLED = 9
+REG_METHANE_PPM_X100_HI = 10
+REG_PRESSURE_PA_HI = 12
+REG_DAC0_CURRENT_UA = 14
+REG_DAC1_CURRENT_UA = 15
+REG_SAMPLE_SEQUENCE_HI = 16
+REG_SAMPLE_UPTIME_SECONDS_HI = 18
+REG_REBOOT_REQUIRED = 27
+REG_DAC_MIN_CURRENT_UA = 30
+REG_DAC_MAX_CURRENT_UA = 31
+REG_DAC_FAULT_CURRENT_UA = 32
+REG_COMMAND = 33
+REG_RS485_PARITY = 34
+REG_RS485_STOP_BITS = 35
+REG_RS485_DATA_BITS = 36
+REG_PRESSURE_TEMP_CENTI_C = 74
+REG_HUMIDITY_RH_X100 = 80
+REG_HUMIDITY_TEMP_CENTI_C = 81
+REG_HUMIDITY_LAST_ERROR = 82
+
+COMMAND_REBOOT = 0xA551
+
 DFU_CMD_NONE = 0x0000
 DFU_CMD_BEGIN = 0xD001
 DFU_CMD_WRITE = 0xD002
@@ -74,6 +105,38 @@ STATUS_NAMES = {
 }
 
 DEFAULT_CHUNK_BYTES = 96
+ARGISENSE_DEVICE_ID = 0xA651
+DISCOVERY_BAUDS = ("115200", "57600", "38400", "19200", "9600")
+DISCOVERY_PARITY_LABELS = ("None (N)", "Even (E)", "Odd (O)")
+DISCOVERY_STOP_BITS = ("2", "1")
+DISCOVERY_TIMEOUT_S = 0.20
+PARITY_OPTIONS = {
+    "None (N)": "N",
+    "Odd (O)": "O",
+    "Even (E)": "E",
+}
+STOP_BITS_OPTIONS = {
+    "1": 1,
+    "2": 2,
+}
+DATA_BITS_OPTIONS = {
+    "8": 8,
+}
+BAUD_PRESET_OPTIONS = {
+    "9600": 0,
+    "19200": 1,
+    "38400": 2,
+    "57600": 3,
+    "115200": 4,
+}
+BAUD_PRESET_BY_VALUE = {value: key for key, value in BAUD_PRESET_OPTIONS.items()}
+PARITY_CODE_OPTIONS = {
+    "None (0)": 0,
+    "Odd (1)": 1,
+    "Even (2)": 2,
+}
+PARITY_LABEL_BY_CODE = {value: key for key, value in PARITY_CODE_OPTIONS.items()}
+MAX_HISTORY_SAMPLES = 180
 
 
 class ModbusError(RuntimeError):
@@ -125,6 +188,13 @@ def u32_from_words(high: int, low: int) -> int:
     return ((high & 0xFFFF) << 16) | (low & 0xFFFF)
 
 
+def signed32_from_words(high: int, low: int) -> int:
+    value = u32_from_words(high, low)
+    if value & 0x80000000:
+        value -= 0x100000000
+    return value
+
+
 def words_from_bytes(data: bytes) -> list[int]:
     if len(data) % 2:
         data += b"\x00"
@@ -132,7 +202,16 @@ def words_from_bytes(data: bytes) -> list[int]:
 
 
 class ModbusRtuClient:
-    def __init__(self, port: str, baudrate: int, unit_id: int, timeout_s: float) -> None:
+    def __init__(
+        self,
+        port: str,
+        baudrate: int,
+        unit_id: int,
+        timeout_s: float,
+        bytesize: int,
+        parity: str,
+        stopbits: int,
+    ) -> None:
         if serial is None:
             raise RuntimeError(
                 "pyserial is not installed. Run: py -3.12 -m pip install -r tools\\rs485_dfu\\requirements.txt"
@@ -141,9 +220,9 @@ class ModbusRtuClient:
         self.ser = serial.Serial(
             port=port,
             baudrate=baudrate,
-            bytesize=8,
-            parity="N",
-            stopbits=1,
+            bytesize=bytesize,
+            parity=parity,
+            stopbits=stopbits,
             timeout=timeout_s,
             write_timeout=timeout_s,
         )
@@ -370,24 +449,95 @@ def signed16(value: int) -> int:
     return value
 
 
+def format_scaled(value: int | float | None, scale: float, unit: str, decimals: int = 2) -> str:
+    if value is None:
+        return "-"
+    return f"{float(value) / scale:.{decimals}f} {unit}"
+
+
+def parse_unit_ids(text: str) -> list[int]:
+    result: list[int] = []
+    seen: set[int] = set()
+    for item in text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "-" in item:
+            start_text, end_text = item.split("-", 1)
+            start = int(start_text.strip())
+            end = int(end_text.strip())
+            if start > end:
+                raise ValueError(f"Invalid Unit ID range: {item}")
+            values = range(start, end + 1)
+        else:
+            values = (int(item),)
+
+        for unit_id in values:
+            if not 1 <= unit_id <= 247:
+                raise ValueError("Scan Unit IDs must be in the Modbus range 1..247.")
+            if unit_id not in seen:
+                seen.add(unit_id)
+                result.append(unit_id)
+
+    if not result:
+        raise ValueError("Enter at least one Unit ID to scan.")
+    return result
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("ArgiSense RS485 Firmware Update")
-        self.geometry("820x620")
-        self.minsize(720, 520)
+        self.title("ArgiSense RS485 Service Tool")
+        self.geometry("1060x760")
+        self.minsize(920, 680)
 
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker: threading.Thread | None = None
+        self.action_buttons: list[ttk.Button] = []
+        self.monitoring = False
+        self.sample_history: list[dict[str, float | int | bool | None]] = []
 
         self.port_var = tk.StringVar()
         self.baud_var = tk.StringVar(value="115200")
+        self.data_bits_var = tk.StringVar(value="8")
+        self.parity_var = tk.StringVar(value="None (N)")
+        self.stop_bits_var = tk.StringVar(value="2")
         self.unit_var = tk.StringVar(value="1")
+        self.scan_units_var = tk.StringVar(value="1-10,247")
+        self.scan_all_ports_var = tk.BooleanVar(value=True)
         self.timeout_var = tk.StringVar(value="1.0")
         self.chunk_var = tk.StringVar(value=str(DEFAULT_CHUNK_BYTES))
         self.file_var = tk.StringVar()
         self.reboot_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Idle")
+        self.poll_interval_var = tk.StringVar(value="2.0")
+        self.sensor_vars = {
+            "methane": tk.StringVar(value="-"),
+            "pressure": tk.StringVar(value="-"),
+            "humidity": tk.StringVar(value="-"),
+            "humidity_temp": tk.StringVar(value="-"),
+            "pressure_temp": tk.StringVar(value="-"),
+            "dac0": tk.StringVar(value="-"),
+            "dac1": tk.StringVar(value="-"),
+            "sequence": tk.StringVar(value="-"),
+            "uptime": tk.StringVar(value="-"),
+            "status": tk.StringVar(value="-"),
+        }
+        self.config_vars = {
+            "unit_id": tk.StringVar(value="1"),
+            "baud_preset": tk.StringVar(value="115200"),
+            "data_bits": tk.StringVar(value="8"),
+            "parity": tk.StringVar(value="None (0)"),
+            "stop_bits": tk.StringVar(value="2"),
+            "termination": tk.BooleanVar(value=False),
+            "period_s": tk.StringVar(value="60"),
+            "window_ms": tk.StringVar(value="1000"),
+            "dac_min": tk.StringVar(value="4000"),
+            "dac_max": tk.StringVar(value="20000"),
+            "dac_fault": tk.StringVar(value="3600"),
+            "map_version": tk.StringVar(value="-"),
+            "reboot_required": tk.StringVar(value="-"),
+        }
 
         self._build_ui()
         self.refresh_ports()
@@ -406,6 +556,11 @@ class App(tk.Tk):
         ttk.Button(settings, text="Refresh", command=self.refresh_ports).grid(
             row=0, column=2, sticky=tk.W, padx=6, pady=6
         )
+        self.auto_detect_button = ttk.Button(
+            settings, text="Auto Detect", command=self.auto_detect
+        )
+        self.auto_detect_button.grid(row=0, column=7, sticky=tk.E, padx=6, pady=6)
+        self.action_buttons.append(self.auto_detect_button)
 
         ttk.Label(settings, text="Baud").grid(row=0, column=3, sticky=tk.W, padx=6, pady=6)
         ttk.Entry(settings, textvariable=self.baud_var, width=10).grid(
@@ -429,10 +584,77 @@ class App(tk.Tk):
         )
         ttk.Label(settings, text="bytes").grid(row=1, column=5, sticky=tk.W, padx=0, pady=6)
 
+        ttk.Label(settings, text="Scan IDs").grid(row=1, column=6, sticky=tk.W, padx=6, pady=6)
+        ttk.Entry(settings, textvariable=self.scan_units_var, width=14).grid(
+            row=1, column=7, sticky=tk.W, padx=6, pady=6
+        )
+
+        ttk.Label(settings, text="Data bits").grid(row=2, column=0, sticky=tk.W, padx=6, pady=6)
+        self.data_bits_combo = ttk.Combobox(
+            settings,
+            textvariable=self.data_bits_var,
+            values=list(DATA_BITS_OPTIONS.keys()),
+            state="readonly",
+            width=8,
+        )
+        self.data_bits_combo.grid(row=2, column=1, sticky=tk.W, padx=6, pady=6)
+
+        ttk.Label(settings, text="Parity").grid(row=2, column=3, sticky=tk.W, padx=6, pady=6)
+        self.parity_combo = ttk.Combobox(
+            settings,
+            textvariable=self.parity_var,
+            values=list(PARITY_OPTIONS.keys()),
+            state="readonly",
+            width=10,
+        )
+        self.parity_combo.grid(row=2, column=4, sticky=tk.W, padx=6, pady=6)
+
+        ttk.Label(settings, text="Stop bits").grid(row=2, column=5, sticky=tk.W, padx=6, pady=6)
+        self.stop_bits_combo = ttk.Combobox(
+            settings,
+            textvariable=self.stop_bits_var,
+            values=list(STOP_BITS_OPTIONS.keys()),
+            state="readonly",
+            width=8,
+        )
+        self.stop_bits_combo.grid(row=2, column=6, sticky=tk.W, padx=6, pady=6)
+
+        ttk.Checkbutton(
+            settings,
+            text="All COM ports",
+            variable=self.scan_all_ports_var,
+        ).grid(row=2, column=7, sticky=tk.W, padx=6, pady=6)
+
         settings.columnconfigure(1, weight=1)
 
-        firmware = ttk.LabelFrame(root, text="Firmware image")
-        firmware.pack(fill=tk.X, pady=(10, 0))
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        firmware_tab = ttk.Frame(self.notebook, padding=8)
+        sensors_tab = ttk.Frame(self.notebook, padding=8)
+        config_tab = ttk.Frame(self.notebook, padding=8)
+        self.notebook.add(firmware_tab, text="Firmware Update")
+        self.notebook.add(sensors_tab, text="Sensors")
+        self.notebook.add(config_tab, text="Device Config")
+
+        self._build_firmware_tab(firmware_tab)
+        self._build_sensors_tab(sensors_tab)
+        self._build_config_tab(config_tab)
+
+        status = ttk.Frame(root)
+        status.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(status, text="Status").pack(side=tk.LEFT)
+        ttk.Label(status, textvariable=self.status_var).pack(side=tk.LEFT, padx=(8, 0))
+
+        log_frame = ttk.LabelFrame(root, text="Log")
+        log_frame.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=9, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def _build_firmware_tab(self, tab: ttk.Frame) -> None:
+        firmware = ttk.LabelFrame(tab, text="Firmware image")
+        firmware.pack(fill=tk.X)
 
         ttk.Entry(firmware, textvariable=self.file_var).grid(
             row=0, column=0, sticky=tk.EW, padx=6, pady=6
@@ -448,20 +670,170 @@ class App(tk.Tk):
 
         firmware.columnconfigure(0, weight=1)
 
-        actions = ttk.Frame(root)
+        actions = ttk.Frame(tab)
         actions.pack(fill=tk.X, pady=(10, 0))
         self.probe_button = ttk.Button(actions, text="Probe", command=self.probe)
         self.probe_button.pack(side=tk.LEFT)
         self.upload_button = ttk.Button(actions, text="Upload Firmware", command=self.upload)
         self.upload_button.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(actions, textvariable=self.status_var).pack(side=tk.LEFT, padx=(16, 0))
+        self.action_buttons.extend([self.probe_button, self.upload_button])
 
-        self.progress_bar = ttk.Progressbar(root, mode="determinate", maximum=100)
+        self.progress_bar = ttk.Progressbar(tab, mode="determinate", maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=(10, 0))
 
-        self.log_text = scrolledtext.ScrolledText(root, height=22, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        self.log_text.configure(state=tk.DISABLED)
+    def _build_sensors_tab(self, tab: ttk.Frame) -> None:
+        toolbar = ttk.Frame(tab)
+        toolbar.pack(fill=tk.X)
+        self.read_sensors_button = ttk.Button(
+            toolbar, text="Read Once", command=self.read_sensors_once
+        )
+        self.read_sensors_button.pack(side=tk.LEFT)
+        self.start_monitor_button = ttk.Button(
+            toolbar, text="Start Graph", command=self.start_monitor
+        )
+        self.start_monitor_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.stop_monitor_button = ttk.Button(
+            toolbar, text="Stop", command=self.stop_monitor
+        )
+        self.stop_monitor_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(toolbar, text="Poll").pack(side=tk.LEFT, padx=(16, 4))
+        ttk.Entry(toolbar, textvariable=self.poll_interval_var, width=7).pack(side=tk.LEFT)
+        ttk.Label(toolbar, text="s").pack(side=tk.LEFT, padx=(4, 0))
+        self.action_buttons.extend(
+            [self.read_sensors_button, self.start_monitor_button]
+        )
+
+        values = ttk.LabelFrame(tab, text="Latest values")
+        values.pack(fill=tk.X, pady=(10, 0))
+        rows = [
+            ("Methane", "methane"),
+            ("Pressure", "pressure"),
+            ("Humidity", "humidity"),
+            ("Humidity temp", "humidity_temp"),
+            ("Pressure temp", "pressure_temp"),
+            ("DAC0 methane", "dac0"),
+            ("DAC1 pressure", "dac1"),
+            ("Sample seq", "sequence"),
+            ("Uptime", "uptime"),
+            ("Status", "status"),
+        ]
+        for index, (label, key) in enumerate(rows):
+            row = index // 2
+            col = (index % 2) * 2
+            ttk.Label(values, text=label).grid(
+                row=row, column=col, sticky=tk.W, padx=6, pady=4
+            )
+            ttk.Label(values, textvariable=self.sensor_vars[key]).grid(
+                row=row, column=col + 1, sticky=tk.W, padx=6, pady=4
+            )
+        values.columnconfigure(1, weight=1)
+        values.columnconfigure(3, weight=1)
+
+        graph_frame = ttk.LabelFrame(tab, text="Trend graph")
+        graph_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        self.graph_canvas = tk.Canvas(
+            graph_frame,
+            height=280,
+            background="white",
+            highlightthickness=1,
+            highlightbackground="#b8c0cc",
+        )
+        self.graph_canvas.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.graph_canvas.bind("<Configure>", lambda _event: self._redraw_graph())
+
+    def _build_config_tab(self, tab: ttk.Frame) -> None:
+        actions = ttk.Frame(tab)
+        actions.pack(fill=tk.X)
+        self.read_config_button = ttk.Button(
+            actions, text="Read Config", command=self.read_config
+        )
+        self.read_config_button.pack(side=tk.LEFT)
+        self.apply_config_button = ttk.Button(
+            actions, text="Apply Config", command=self.apply_config
+        )
+        self.apply_config_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.reboot_button = ttk.Button(
+            actions, text="Reboot Device", command=self.reboot_device
+        )
+        self.reboot_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.action_buttons.extend(
+            [self.read_config_button, self.apply_config_button, self.reboot_button]
+        )
+
+        transport = ttk.LabelFrame(tab, text="RS485 transport")
+        transport.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(transport, text="Unit ID").grid(row=0, column=0, sticky=tk.W, padx=6, pady=6)
+        ttk.Entry(transport, textvariable=self.config_vars["unit_id"], width=8).grid(
+            row=0, column=1, sticky=tk.W, padx=6, pady=6
+        )
+        ttk.Label(transport, text="Baud").grid(row=0, column=2, sticky=tk.W, padx=6, pady=6)
+        ttk.Combobox(
+            transport,
+            textvariable=self.config_vars["baud_preset"],
+            values=list(BAUD_PRESET_OPTIONS.keys()),
+            state="readonly",
+            width=10,
+        ).grid(row=0, column=3, sticky=tk.W, padx=6, pady=6)
+        ttk.Label(transport, text="Data bits").grid(row=0, column=4, sticky=tk.W, padx=6, pady=6)
+        ttk.Combobox(
+            transport,
+            textvariable=self.config_vars["data_bits"],
+            values=list(DATA_BITS_OPTIONS.keys()),
+            state="readonly",
+            width=8,
+        ).grid(row=0, column=5, sticky=tk.W, padx=6, pady=6)
+        ttk.Label(transport, text="Parity").grid(row=1, column=0, sticky=tk.W, padx=6, pady=6)
+        ttk.Combobox(
+            transport,
+            textvariable=self.config_vars["parity"],
+            values=list(PARITY_CODE_OPTIONS.keys()),
+            state="readonly",
+            width=10,
+        ).grid(row=1, column=1, sticky=tk.W, padx=6, pady=6)
+        ttk.Label(transport, text="Stop bits").grid(row=1, column=2, sticky=tk.W, padx=6, pady=6)
+        ttk.Combobox(
+            transport,
+            textvariable=self.config_vars["stop_bits"],
+            values=list(STOP_BITS_OPTIONS.keys()),
+            state="readonly",
+            width=8,
+        ).grid(row=1, column=3, sticky=tk.W, padx=6, pady=6)
+        ttk.Checkbutton(
+            transport,
+            text="RS485 termination",
+            variable=self.config_vars["termination"],
+        ).grid(row=1, column=4, columnspan=2, sticky=tk.W, padx=6, pady=6)
+
+        runtime = ttk.LabelFrame(tab, text="Runtime")
+        runtime.pack(fill=tk.X, pady=(10, 0))
+        runtime_rows = [
+            ("Measurement period", "period_s", "s"),
+            ("Measurement window", "window_ms", "ms"),
+            ("DAC min current", "dac_min", "uA"),
+            ("DAC max current", "dac_max", "uA"),
+            ("DAC fault current", "dac_fault", "uA"),
+        ]
+        for index, (label, key, unit) in enumerate(runtime_rows):
+            ttk.Label(runtime, text=label).grid(
+                row=index, column=0, sticky=tk.W, padx=6, pady=4
+            )
+            ttk.Entry(runtime, textvariable=self.config_vars[key], width=12).grid(
+                row=index, column=1, sticky=tk.W, padx=6, pady=4
+            )
+            ttk.Label(runtime, text=unit).grid(
+                row=index, column=2, sticky=tk.W, padx=0, pady=4
+            )
+
+        info = ttk.LabelFrame(tab, text="Device state")
+        info.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(info, text="Register map").grid(row=0, column=0, sticky=tk.W, padx=6, pady=4)
+        ttk.Label(info, textvariable=self.config_vars["map_version"]).grid(
+            row=0, column=1, sticky=tk.W, padx=6, pady=4
+        )
+        ttk.Label(info, text="Reboot required").grid(row=0, column=2, sticky=tk.W, padx=6, pady=4)
+        ttk.Label(info, textvariable=self.config_vars["reboot_required"]).grid(
+            row=0, column=3, sticky=tk.W, padx=6, pady=4
+        )
 
     def refresh_ports(self) -> None:
         if list_ports is None:
@@ -491,54 +863,359 @@ class App(tk.Tk):
 
     def set_busy(self, busy: bool) -> None:
         state = tk.DISABLED if busy else tk.NORMAL
-        self.probe_button.configure(state=state)
-        self.upload_button.configure(state=state)
+        for button in self.action_buttons:
+            button.configure(state=state)
+        self.stop_monitor_button.configure(state=tk.NORMAL)
+
+    def auto_detect(self) -> None:
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("ArgiSense RS485", "An operation is already running.")
+            return
+        try:
+            parse_unit_ids(self.scan_units_var.get())
+            timeout = float(self.timeout_var.get())
+            if timeout <= 0:
+                raise ValueError("Timeout must be positive.")
+        except Exception as exc:  # noqa: BLE001 - presented to operator.
+            messagebox.showerror("ArgiSense RS485", str(exc))
+            return
+
+        self.monitoring = False
+        self.progress_bar["value"] = 0
+        self.set_busy(True)
+        self.status_var.set("Scanning")
+        self.worker = threading.Thread(
+            target=lambda: self._auto_detect_worker(reschedule_monitor=False),
+            daemon=True,
+        )
+        self.worker.start()
 
     def probe(self) -> None:
         self._start_worker(self._probe_worker)
 
     def upload(self) -> None:
-        self._start_worker(self._upload_worker)
+        self._start_worker(self._upload_worker, require_chunk=True)
 
-    def _start_worker(self, target) -> None:
+    def read_sensors_once(self) -> None:
+        self._start_worker(self._read_sensors_worker)
+
+    def start_monitor(self) -> None:
+        try:
+            interval = float(self.poll_interval_var.get())
+        except ValueError:
+            messagebox.showerror("ArgiSense RS485", "Poll interval must be numeric.")
+            return
+        if interval <= 0:
+            messagebox.showerror("ArgiSense RS485", "Poll interval must be positive.")
+            return
+        self.monitoring = True
+        self.status_var.set("Graph polling")
+        self._monitor_tick()
+
+    def stop_monitor(self) -> None:
+        self.monitoring = False
+        self.status_var.set("Graph stopped")
+
+    def read_config(self) -> None:
+        self._start_worker(self._read_config_worker)
+
+    def apply_config(self) -> None:
+        self._start_worker(self._apply_config_worker)
+
+    def reboot_device(self) -> None:
+        if not messagebox.askyesno(
+            "ArgiSense RS485",
+            "Reboot the device now? The RS485 port may disconnect briefly.",
+        ):
+            return
+        self._start_worker(self._reboot_worker)
+
+    def _monitor_tick(self) -> None:
+        if not self.monitoring:
+            return
         if self.worker and self.worker.is_alive():
-            messagebox.showinfo("ArgiSense RS485 DFU", "An operation is already running.")
+            self.after(250, self._monitor_tick)
+            return
+        self._start_worker(self._read_sensors_worker, reschedule_monitor=True)
+
+    def _start_worker(
+        self,
+        target,
+        *,
+        require_chunk: bool = False,
+        reschedule_monitor: bool = False,
+    ) -> None:
+        if self.worker and self.worker.is_alive():
+            if not reschedule_monitor:
+                messagebox.showinfo("ArgiSense RS485", "An operation is already running.")
             return
         try:
-            self._validate_common()
+            self._validate_common(require_chunk=require_chunk)
         except Exception as exc:  # noqa: BLE001 - presented to operator.
-            messagebox.showerror("ArgiSense RS485 DFU", str(exc))
+            self.monitoring = False
+            messagebox.showerror("ArgiSense RS485", str(exc))
             return
         self.set_busy(True)
         self.status_var.set("Working")
-        self.worker = threading.Thread(target=target, daemon=True)
+        self.worker = threading.Thread(
+            target=lambda: target(reschedule_monitor=reschedule_monitor),
+            daemon=True,
+        )
         self.worker.start()
 
-    def _validate_common(self) -> None:
+    def _validate_common(self, *, require_chunk: bool = False) -> None:
         if not self.port_var.get():
             raise ValueError("Select a serial port.")
         baud = int(self.baud_var.get())
         unit_id = int(self.unit_var.get())
         timeout = float(self.timeout_var.get())
-        chunk = int(self.chunk_var.get())
+        if self.data_bits_var.get() not in DATA_BITS_OPTIONS:
+            raise ValueError("Select a valid data-bits value.")
+        if self.parity_var.get() not in PARITY_OPTIONS:
+            raise ValueError("Select a valid parity value.")
+        if self.stop_bits_var.get() not in STOP_BITS_OPTIONS:
+            raise ValueError("Select 1 or 2 stop bits.")
         if not 1 <= unit_id <= 247:
             raise ValueError("Unit ID must be 1..247.")
         if baud <= 0:
             raise ValueError("Baudrate must be positive.")
         if timeout <= 0:
             raise ValueError("Timeout must be positive.")
-        if chunk < 16 or chunk > 128 or chunk % 2:
-            raise ValueError("Chunk must be an even value from 16 to 128 bytes.")
+        if require_chunk:
+            chunk = int(self.chunk_var.get())
+            if chunk < 16 or chunk > 128 or chunk % 2:
+                raise ValueError("Chunk must be an even value from 16 to 128 bytes.")
 
     def _make_client(self) -> ModbusRtuClient:
-        return ModbusRtuClient(
+        return self._make_client_for(
             port=self.port_var.get(),
             baudrate=int(self.baud_var.get()),
             unit_id=int(self.unit_var.get()),
             timeout_s=float(self.timeout_var.get()),
+            bytesize=DATA_BITS_OPTIONS[self.data_bits_var.get()],
+            parity=PARITY_OPTIONS[self.parity_var.get()],
+            stopbits=STOP_BITS_OPTIONS[self.stop_bits_var.get()],
         )
 
-    def _probe_worker(self) -> None:
+    def _make_client_for(
+        self,
+        *,
+        port: str,
+        baudrate: int,
+        unit_id: int,
+        timeout_s: float,
+        bytesize: int,
+        parity: str,
+        stopbits: int,
+    ) -> ModbusRtuClient:
+        return ModbusRtuClient(
+            port=port,
+            baudrate=baudrate,
+            unit_id=unit_id,
+            timeout_s=timeout_s,
+            bytesize=bytesize,
+            parity=parity,
+            stopbits=stopbits,
+        )
+
+    def _scan_port_candidates(self) -> list[str]:
+        selected = self.port_var.get().strip()
+        if self.scan_all_ports_var.get():
+            if list_ports is None:
+                if selected:
+                    return [selected]
+                raise RuntimeError(
+                    "pyserial is not installed. Run: py -3.12 -m pip install -r tools\\rs485_dfu\\requirements.txt"
+                )
+            ports = [port.device for port in list_ports.comports()]
+            if selected and selected not in ports:
+                ports.insert(0, selected)
+            if not ports:
+                raise RuntimeError("No serial ports found.")
+            return ports
+
+        if not selected:
+            raise RuntimeError("Select a serial port or enable All COM ports.")
+        return [selected]
+
+    def _auto_detect_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
+        try:
+            if serial is None:
+                raise RuntimeError(
+                    "pyserial is not installed. Run: py -3.12 -m pip install -r tools\\rs485_dfu\\requirements.txt"
+                )
+
+            ports = self._scan_port_candidates()
+            unit_ids = parse_unit_ids(self.scan_units_var.get())
+            timeout_s = min(max(float(self.timeout_var.get()), 0.05), DISCOVERY_TIMEOUT_S)
+            data_label = "8"
+            data_bits = DATA_BITS_OPTIONS[data_label]
+            total = (
+                len(ports)
+                * len(DISCOVERY_BAUDS)
+                * len(DISCOVERY_PARITY_LABELS)
+                * len(DISCOVERY_STOP_BITS)
+                * len(unit_ids)
+            )
+            attempts = 0
+            last_error: Exception | None = None
+
+            self.log(
+                "Auto detect started: "
+                f"ports={','.join(ports)} ids={self.scan_units_var.get()} "
+                f"timeout={timeout_s:.2f}s"
+            )
+
+            for port in ports:
+                self.log(f"Scanning {port}")
+                for baud_label in DISCOVERY_BAUDS:
+                    baudrate = int(baud_label)
+                    for parity_label in DISCOVERY_PARITY_LABELS:
+                        parity = PARITY_OPTIONS[parity_label]
+                        for stop_label in DISCOVERY_STOP_BITS:
+                            stopbits = STOP_BITS_OPTIONS[stop_label]
+                            self.log(
+                                f"Trying {port}: {baudrate} baud, "
+                                f"{data_label}{parity}{stop_label}"
+                            )
+                            client: ModbusRtuClient | None = None
+                            try:
+                                client = self._make_client_for(
+                                    port=port,
+                                    baudrate=baudrate,
+                                    unit_id=unit_ids[0],
+                                    timeout_s=timeout_s,
+                                    bytesize=data_bits,
+                                    parity=parity,
+                                    stopbits=stopbits,
+                                )
+                                time.sleep(0.02)
+
+                                for unit_id in unit_ids:
+                                    client.unit_id = unit_id
+                                    try:
+                                        regs = client.read_holding(REG_DEVICE_ID, 2)
+                                        if regs[REG_DEVICE_ID] == ARGISENSE_DEVICE_ID:
+                                            found = {
+                                                "port": port,
+                                                "baudrate": baudrate,
+                                                "unit_id": unit_id,
+                                                "data_bits_label": data_label,
+                                                "parity_label": parity_label,
+                                                "stop_bits_label": stop_label,
+                                                "map_version": regs[REG_MAP_VERSION],
+                                            }
+                                            config = self._read_config_snapshot(client)
+                                            self.messages.put(("connection", found))
+                                            self.messages.put(("config", config))
+                                            try:
+                                                sample = self._read_sample(client)
+                                                self.messages.put(("sample", sample))
+                                            except Exception as exc:  # noqa: BLE001 - optional after discovery.
+                                                self.log(f"Sensor read after detect skipped: {exc}")
+                                            self.messages.put(
+                                                (
+                                                    "done",
+                                                    "Connected "
+                                                    f"{port} unit={unit_id} "
+                                                    f"{baudrate} {data_label}{parity}{stop_label} "
+                                                    f"map=v{regs[REG_MAP_VERSION]}",
+                                                )
+                                            )
+                                            return
+                                        self.log(
+                                            f"{port} unit={unit_id} responded with "
+                                            f"device_id=0x{regs[REG_DEVICE_ID]:04X}"
+                                        )
+                                    except Exception as exc:  # noqa: BLE001 - line noise/empty IDs are expected.
+                                        last_error = exc
+                                    finally:
+                                        attempts += 1
+                                        self.messages.put(("scan_progress", (attempts, total)))
+                            except Exception as exc:  # noqa: BLE001 - try next serial format.
+                                last_error = exc
+                                self.log(
+                                    f"Skip {port} {baudrate} {data_label}{parity}{stop_label}: {exc}"
+                                )
+                                attempts += len(unit_ids)
+                                self.messages.put(("scan_progress", (attempts, total)))
+                            finally:
+                                if client is not None:
+                                    client.close()
+
+            suffix = f" Last error: {last_error}" if last_error else ""
+            raise RuntimeError(f"No ArgiSense device found.{suffix}")
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.messages.put(("error", str(exc)))
+
+    def _read_sample(self, client: ModbusRtuClient) -> dict[str, float | int | bool | None]:
+        live = client.read_holding(REG_DEVICE_ID, 20)
+        diagnostics = client.read_holding(70, 13)
+        status_flags = live[REG_STATUS_FLAGS]
+        methane_ppm_x100 = signed32_from_words(live[10], live[11])
+        pressure_pa = signed32_from_words(live[12], live[13])
+        humidity_rh_x100 = signed16(diagnostics[10])
+        humidity_temp_centi_c = signed16(diagnostics[11])
+        pressure_temp_centi_c = signed16(diagnostics[4])
+        return {
+            "timestamp": time.time(),
+            "device_id": live[REG_DEVICE_ID],
+            "map_version": live[REG_MAP_VERSION],
+            "status_flags": status_flags,
+            "methane_valid": bool(status_flags & 0x0001),
+            "pressure_valid": bool(status_flags & 0x0002),
+            "sample_ready": bool(status_flags & 0x0004),
+            "humidity_valid": bool(status_flags & 0x0010),
+            "humidity_error": bool(status_flags & 0x0020),
+            "methane_ppm": methane_ppm_x100 / 100.0,
+            "pressure_pa": pressure_pa,
+            "humidity_rh": humidity_rh_x100 / 100.0,
+            "humidity_temp_c": humidity_temp_centi_c / 100.0,
+            "pressure_temp_c": pressure_temp_centi_c / 100.0,
+            "dac0_ua": live[REG_DAC0_CURRENT_UA],
+            "dac1_ua": live[REG_DAC1_CURRENT_UA],
+            "sequence": u32_from_words(live[REG_SAMPLE_SEQUENCE_HI], live[REG_SAMPLE_SEQUENCE_HI + 1]),
+            "uptime_s": u32_from_words(
+                live[REG_SAMPLE_UPTIME_SECONDS_HI],
+                live[REG_SAMPLE_UPTIME_SECONDS_HI + 1],
+            ),
+            "methane_error": signed16(diagnostics[2]),
+            "pressure_error": signed16(diagnostics[3]),
+            "humidity_error_code": signed16(diagnostics[12]),
+        }
+
+    def _read_config_snapshot(self, client: ModbusRtuClient) -> dict[str, int]:
+        regs = client.read_holding(REG_DEVICE_ID, 34)
+        map_version = regs[REG_MAP_VERSION]
+        parity = 0
+        stop_bits = 2
+        data_bits = 8
+        if map_version >= 6:
+            parity, stop_bits, data_bits = client.read_holding(REG_RS485_PARITY, 3)
+        elif map_version >= 5:
+            parity, stop_bits = client.read_holding(REG_RS485_PARITY, 2)
+        return {
+            "map_version": map_version,
+            "unit_id": regs[REG_MODBUS_ADDRESS],
+            "baudrate": u32_from_words(regs[REG_BAUDRATE_HI], regs[REG_BAUDRATE_LO]),
+            "period_s": regs[REG_MEASUREMENT_PERIOD_SECONDS],
+            "window_ms": regs[REG_MEASUREMENT_WINDOW_MS],
+            "baud_preset": regs[REG_BAUD_PRESET],
+            "termination": regs[REG_TERMINATION_ENABLED],
+            "reboot_required": regs[REG_REBOOT_REQUIRED],
+            "dac_min": regs[REG_DAC_MIN_CURRENT_UA],
+            "dac_max": regs[REG_DAC_MAX_CURRENT_UA],
+            "dac_fault": regs[REG_DAC_FAULT_CURRENT_UA],
+            "parity": parity,
+            "stop_bits": stop_bits,
+            "data_bits": data_bits,
+        }
+
+    def _probe_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
         try:
             client = self._make_client()
             try:
@@ -550,13 +1227,102 @@ class App(tk.Tk):
                 self.log(
                     f"DFU status: {STATUS_NAMES.get(status, status)} error={signed16(error)}"
                 )
+                if map_version >= 6:
+                    parity, stop_bits, data_bits = client.read_holding(
+                        REG_RS485_PARITY, 3
+                    )
+                    self.log(
+                        f"RS485 settings: data_bits={data_bits} parity={parity} stop_bits={stop_bits}"
+                    )
+                elif map_version >= 5:
+                    parity, stop_bits = client.read_holding(REG_RS485_PARITY, 2)
+                    self.log(f"RS485 settings: parity={parity} stop_bits={stop_bits}")
                 self.messages.put(("done", "Probe complete"))
             finally:
                 client.close()
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
             self.messages.put(("error", str(exc)))
 
-    def _upload_worker(self) -> None:
+    def _read_sensors_worker(self, *, reschedule_monitor: bool = False) -> None:
+        try:
+            client = self._make_client()
+            try:
+                sample = self._read_sample(client)
+                self.messages.put(("sample", sample))
+                self.messages.put(("done", "Sensor read complete"))
+            finally:
+                client.close()
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.monitoring = False
+            self.messages.put(("error", str(exc)))
+        finally:
+            if reschedule_monitor:
+                self.messages.put(("monitor_reschedule", None))
+
+    def _read_config_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
+        try:
+            client = self._make_client()
+            try:
+                config = self._read_config_snapshot(client)
+                self.messages.put(("config", config))
+                self.messages.put(("done", "Config read complete"))
+            finally:
+                client.close()
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.messages.put(("error", str(exc)))
+
+    def _apply_config_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
+        try:
+            values = self._collect_config_values()
+            client = self._make_client()
+            try:
+                current = self._read_config_snapshot(client)
+                client.write_single(REG_MODBUS_ADDRESS, values["unit_id"])
+                client.write_single(REG_BAUD_PRESET, values["baud_preset"])
+                client.write_single(REG_RS485_DATA_BITS, values["data_bits"])
+                client.write_single(REG_RS485_PARITY, values["parity"])
+                client.write_single(REG_RS485_STOP_BITS, values["stop_bits"])
+                client.write_single(REG_TERMINATION_ENABLED, values["termination"])
+                client.write_single(REG_MEASUREMENT_PERIOD_SECONDS, values["period_s"])
+                client.write_single(REG_MEASUREMENT_WINDOW_MS, values["window_ms"])
+                if values["dac_min"] > current["dac_max"]:
+                    client.write_single(REG_DAC_MAX_CURRENT_UA, values["dac_max"])
+                    client.write_single(REG_DAC_MIN_CURRENT_UA, values["dac_min"])
+                elif values["dac_max"] < current["dac_min"]:
+                    client.write_single(REG_DAC_MIN_CURRENT_UA, values["dac_min"])
+                    client.write_single(REG_DAC_MAX_CURRENT_UA, values["dac_max"])
+                else:
+                    client.write_single(REG_DAC_MIN_CURRENT_UA, values["dac_min"])
+                    client.write_single(REG_DAC_MAX_CURRENT_UA, values["dac_max"])
+                client.write_single(REG_DAC_FAULT_CURRENT_UA, values["dac_fault"])
+                config = self._read_config_snapshot(client)
+                self.messages.put(("config", config))
+                self.messages.put(("done", "Config saved; reboot required for transport changes"))
+            finally:
+                client.close()
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.messages.put(("error", str(exc)))
+
+    def _reboot_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
+        try:
+            client = self._make_client()
+            try:
+                client.write_single(REG_COMMAND, COMMAND_REBOOT)
+                self.messages.put(("done", "Reboot command sent"))
+            finally:
+                client.close()
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.messages.put(("error", str(exc)))
+
+    def _upload_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
         try:
             image_path = Path(self.file_var.get())
             if not image_path.is_file():
@@ -578,17 +1344,208 @@ class App(tk.Tk):
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
             self.messages.put(("error", str(exc)))
 
+    def _collect_config_values(self) -> dict[str, int]:
+        def parse_range(key: str, minimum: int, maximum: int) -> int:
+            value = int(self.config_vars[key].get())
+            if value < minimum or value > maximum:
+                raise ValueError(f"{key} must be {minimum}..{maximum}")
+            return value
+
+        baud_label = self.config_vars["baud_preset"].get()
+        parity_label = self.config_vars["parity"].get()
+        stop_label = self.config_vars["stop_bits"].get()
+        data_label = self.config_vars["data_bits"].get()
+        if baud_label not in BAUD_PRESET_OPTIONS:
+            raise ValueError("Select a supported baud preset.")
+        if parity_label not in PARITY_CODE_OPTIONS:
+            raise ValueError("Select a supported parity setting.")
+        if stop_label not in STOP_BITS_OPTIONS:
+            raise ValueError("Select 1 or 2 stop bits.")
+        if data_label not in DATA_BITS_OPTIONS:
+            raise ValueError("Select 8 data bits.")
+
+        values = {
+            "unit_id": parse_range("unit_id", 1, 247),
+            "baud_preset": BAUD_PRESET_OPTIONS[baud_label],
+            "data_bits": DATA_BITS_OPTIONS[data_label],
+            "parity": PARITY_CODE_OPTIONS[parity_label],
+            "stop_bits": STOP_BITS_OPTIONS[stop_label],
+            "termination": 1 if self.config_vars["termination"].get() else 0,
+            "period_s": parse_range("period_s", 1, 65535),
+            "window_ms": parse_range("window_ms", 1, 60000),
+            "dac_min": parse_range("dac_min", 0, 25000),
+            "dac_max": parse_range("dac_max", 0, 25000),
+            "dac_fault": parse_range("dac_fault", 0, 25000),
+        }
+        if values["dac_min"] >= values["dac_max"]:
+            raise ValueError("dac_min must be lower than dac_max")
+        return values
+
+    def _update_sample_ui(self, sample: dict[str, float | int | bool | None]) -> None:
+        self.sensor_vars["methane"].set(
+            format_scaled(sample.get("methane_ppm"), 1.0, "ppm", 2)
+        )
+        self.sensor_vars["pressure"].set(
+            format_scaled(sample.get("pressure_pa"), 1.0, "Pa", 0)
+        )
+        self.sensor_vars["humidity"].set(
+            format_scaled(sample.get("humidity_rh"), 1.0, "%RH", 2)
+        )
+        self.sensor_vars["humidity_temp"].set(
+            format_scaled(sample.get("humidity_temp_c"), 1.0, "degC", 2)
+        )
+        self.sensor_vars["pressure_temp"].set(
+            format_scaled(sample.get("pressure_temp_c"), 1.0, "degC", 2)
+        )
+        self.sensor_vars["dac0"].set(format_scaled(sample.get("dac0_ua"), 1.0, "uA", 0))
+        self.sensor_vars["dac1"].set(format_scaled(sample.get("dac1_ua"), 1.0, "uA", 0))
+        self.sensor_vars["sequence"].set(str(sample.get("sequence", "-")))
+        self.sensor_vars["uptime"].set(format_scaled(sample.get("uptime_s"), 1.0, "s", 0))
+        status = []
+        for label, key in (
+            ("methane", "methane_valid"),
+            ("pressure", "pressure_valid"),
+            ("humidity", "humidity_valid"),
+        ):
+            status.append(f"{label}={'ok' if sample.get(key) else 'bad'}")
+        self.sensor_vars["status"].set(", ".join(status))
+
+        self.sample_history.append(sample)
+        if len(self.sample_history) > MAX_HISTORY_SAMPLES:
+            self.sample_history = self.sample_history[-MAX_HISTORY_SAMPLES:]
+        self._redraw_graph()
+
+    def _update_config_ui(self, config: dict[str, int]) -> None:
+        self.config_vars["map_version"].set(str(config["map_version"]))
+        self.config_vars["unit_id"].set(str(config["unit_id"]))
+        self.config_vars["period_s"].set(str(config["period_s"]))
+        self.config_vars["window_ms"].set(str(config["window_ms"]))
+        self.config_vars["dac_min"].set(str(config["dac_min"]))
+        self.config_vars["dac_max"].set(str(config["dac_max"]))
+        self.config_vars["dac_fault"].set(str(config["dac_fault"]))
+        self.config_vars["termination"].set(config["termination"] != 0)
+        self.config_vars["reboot_required"].set("yes" if config["reboot_required"] else "no")
+
+        baud_label = BAUD_PRESET_BY_VALUE.get(config["baud_preset"])
+        if baud_label is None:
+            baud_label = str(config["baudrate"])
+            if baud_label not in BAUD_PRESET_OPTIONS:
+                baud_label = "115200"
+                self.log(
+                    f"Device reports custom baud {config['baudrate']}; GUI apply uses presets only."
+                )
+        self.config_vars["baud_preset"].set(baud_label)
+        self.config_vars["data_bits"].set(str(config["data_bits"]))
+        self.config_vars["stop_bits"].set(str(config["stop_bits"]))
+        self.config_vars["parity"].set(
+            PARITY_LABEL_BY_CODE.get(config["parity"], "None (0)")
+        )
+
+    def _update_connection_ui(self, connection: dict[str, int | str]) -> None:
+        port = str(connection["port"])
+        current_ports = list(self.port_combo["values"])
+        if port not in current_ports:
+            self.port_combo["values"] = [port, *current_ports]
+        self.port_var.set(port)
+        self.baud_var.set(str(connection["baudrate"]))
+        self.unit_var.set(str(connection["unit_id"]))
+        self.data_bits_var.set(str(connection["data_bits_label"]))
+        self.parity_var.set(str(connection["parity_label"]))
+        self.stop_bits_var.set(str(connection["stop_bits_label"]))
+
+    def _redraw_graph(self) -> None:
+        canvas = self.graph_canvas
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 200)
+        height = max(canvas.winfo_height(), 160)
+        left = 52
+        right = width - 16
+        top = 24
+        bottom = height - 36
+        canvas.create_rectangle(left, top, right, bottom, outline="#cbd5e1")
+        canvas.create_text(
+            left,
+            10,
+            anchor=tk.W,
+            text="Auto-scaled trend: methane ppm, pressure Pa, humidity %RH",
+            fill="#334155",
+        )
+
+        if len(self.sample_history) < 2:
+            canvas.create_text(
+                (left + right) // 2,
+                (top + bottom) // 2,
+                text="Read sensor values to start graph",
+                fill="#64748b",
+            )
+            return
+
+        series = [
+            ("methane_ppm", "Methane ppm", "#15803d"),
+            ("pressure_pa", "Pressure Pa", "#2563eb"),
+            ("humidity_rh", "Humidity %RH", "#d97706"),
+        ]
+        x_span = max(len(self.sample_history) - 1, 1)
+        for s_index, (key, label, color) in enumerate(series):
+            values = [
+                float(sample[key])
+                for sample in self.sample_history
+                if sample.get(key) is not None
+            ]
+            if len(values) < 2:
+                continue
+            min_v = min(values)
+            max_v = max(values)
+            if min_v == max_v:
+                min_v -= 1.0
+                max_v += 1.0
+            points: list[float] = []
+            for index, sample in enumerate(self.sample_history):
+                value = sample.get(key)
+                if value is None:
+                    continue
+                x = left + ((right - left) * index / x_span)
+                y = bottom - ((float(value) - min_v) * (bottom - top) / (max_v - min_v))
+                points.extend([x, y])
+            if len(points) >= 4:
+                canvas.create_line(*points, fill=color, width=2, smooth=True)
+            legend_y = top + 18 + s_index * 18
+            canvas.create_line(right - 170, legend_y, right - 145, legend_y, fill=color, width=3)
+            canvas.create_text(
+                right - 140,
+                legend_y,
+                anchor=tk.W,
+                text=f"{label} ({min_v:.1f}..{max_v:.1f})",
+                fill="#0f172a",
+            )
+
     def _poll_messages(self) -> None:
         try:
             while True:
                 kind, payload = self.messages.get_nowait()
                 if kind == "log":
                     self._append_log(str(payload))
+                elif kind == "connection":
+                    self._update_connection_ui(payload)  # type: ignore[arg-type]
+                elif kind == "sample":
+                    self._update_sample_ui(payload)  # type: ignore[arg-type]
+                elif kind == "config":
+                    self._update_config_ui(payload)  # type: ignore[arg-type]
                 elif kind == "progress":
                     done, total = payload  # type: ignore[misc]
                     percent = 0 if total == 0 else int((done * 100) / total)
                     self.progress_bar["value"] = percent
                     self.status_var.set(f"Uploading {percent}%")
+                elif kind == "scan_progress":
+                    done, total = payload  # type: ignore[misc]
+                    percent = 0 if total == 0 else int((done * 100) / total)
+                    self.progress_bar["value"] = min(percent, 100)
+                    self.status_var.set(f"Scanning {min(percent, 100)}%")
+                elif kind == "monitor_reschedule":
+                    self.set_busy(False)
+                    if self.monitoring:
+                        delay_ms = max(100, int(float(self.poll_interval_var.get()) * 1000))
+                        self.after(delay_ms, self._monitor_tick)
                 elif kind == "done":
                     self.status_var.set(str(payload))
                     self.set_busy(False)
@@ -597,7 +1554,7 @@ class App(tk.Tk):
                     self.status_var.set("Error")
                     self.set_busy(False)
                     self._append_log(f"ERROR: {payload}")
-                    messagebox.showerror("ArgiSense RS485 DFU", str(payload))
+                    messagebox.showerror("ArgiSense RS485", str(payload))
         except queue.Empty:
             pass
         self.after(100, self._poll_messages)

@@ -369,7 +369,9 @@ Default electrical and UART setup:
 | Interface | RS485 half-duplex |
 | UART | `usart2` |
 | Baud rate | 115200 by default, configurable through settings/register `8` |
-| Data format | 8N1 |
+| Data bits | `8`; exposed in settings/registers, currently fixed for Modbus RTU |
+| Parity | `0=none` by default; configurable as `0=none`, `1=odd`, `2=even` |
+| Stop bits | `2` by default for Modbus RTU no-parity framing; configurable as `1` or `2` |
 | DE control | STM32 USART hardware DE |
 | Termination | Disabled by default, host configurable |
 
@@ -379,7 +381,7 @@ Implemented holding-register map summary:
 | --- | --- | --- |
 | `0..19` | R/RW | Device identity, status, serial settings, live methane/pressure values, DAC current commands, sample sequence, and sample uptime |
 | `20..29` | R | MCUboot image version, boot flags, active slot, reboot-required flag, and last command result |
-| `30..33` | R/W | DAC current limits and command register |
+| `30..36` | R/W | DAC current limits, command register, RS485 parity, stop bits, and data bits |
 | `40..59` | R/W | Methane/pressure DAC ranges, offsets, and DAC trim placeholders |
 | `70..82` | R | Dynament status/protocol, last sensor errors, MS5803 temperature/raw/CRC diagnostics, and HTU21D humidity/temperature/error diagnostics |
 | `1000..1035` | R/W | RS485 firmware-update control, status, image metadata, SHA-256, and command registers |
@@ -389,13 +391,17 @@ The full register table is maintained in `README.md`. All multi-register values
 use high word first. Masters should read paired 32-bit values in one Modbus
 request, or compare the sample sequence before and after a larger read block.
 
-RS485 can also be used as the sealed-product firmware update path. The PC GUI in
-`tools/rs485_dfu/argisense_rs485_dfu_gui.py` uploads
+RS485 can also be used as the sealed-product service and firmware update path.
+The PC GUI in `tools/rs485_dfu/argisense_rs485_dfu_gui.py` has tabs for firmware
+update, live sensor monitoring/graphing, and device configuration. It can
+auto-detect an ArgiSense node by scanning COM ports, supported baud presets,
+8-bit Modbus RTU framing variants, parity, stop bits, and Unit IDs until
+register `0` returns device ID `0xA651`. The firmware update tab uploads
 `build/argisense-zephyr-app/zephyr/zephyr.signed.bin` over Modbus holding
 registers. The application writes the image to MCUboot `image-1`, verifies CRC32
-and SHA-256, then can mark the verified image for a test swap and reboot. MCUboot
-performs the swap on the next boot, and the application confirms the image after
-bring-up checks pass.
+and SHA-256, then can mark the verified image for a test swap and reboot.
+MCUboot performs the swap on the next boot, and the application confirms the
+image after bring-up checks pass.
 
 ## USB-C Firmware Update and Service Console
 
@@ -557,8 +563,9 @@ argisense settings reset
 ```
 
 Every shell write is validated by the settings module before it is saved to NVS.
-RS485 baudrate and Modbus address writes are persistent immediately, but the
-running RS485 server uses the old transport parameters until the next reboot.
+RS485 baudrate, data-bit, parity, stop-bit, and Modbus address writes are
+persistent immediately, but the running RS485 server uses the old transport
+parameters until the next reboot.
 
 Recommended storage approach:
 
@@ -612,13 +619,14 @@ Implemented:
 - AT24C512C external EEPROM mapping through Zephyr's standard AT24 EEPROM
   driver, with read-only ArgiSense shell diagnostics.
 - GP8302 Zephyr DAC driver for two independent current-loop outputs.
-- Modbus RTU register map v4 with live data, settings, MCUboot version fields,
+- Modbus RTU register map v6 with live data, settings, MCUboot version fields,
   commands, diagnostics, and RS485 MCUboot image upload support.
 - USB-C composite CDC ACM profile for console/shell plus MCUmgr firmware update
   through the `argisense-usb-update` snippet.
 - Shell diagnostics for driver readiness, one-shot sensor reads, settings, and
   register inspection.
-- Python/Tkinter RS485 DFU GUI under `tools/rs485_dfu`.
+- Python/Tkinter RS485 service GUI under `tools/rs485_dfu` for auto-detect,
+  firmware update, live sensor graphing, and runtime device configuration.
 - Python/Tkinter USB-C MCUmgr GUI under `tools/usb_mcumgr`.
 - Rollback-friendly MCUboot/sysbuild policy for bring-up and field service, with
   downgrade prevention currently disabled.

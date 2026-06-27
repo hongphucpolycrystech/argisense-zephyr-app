@@ -23,8 +23,48 @@ LOG_MODULE_REGISTER(argisense_settings, LOG_LEVEL_INF);
 BUILD_ASSERT(sizeof(struct argisense_runtime_config) <= SETTINGS_MAX_VAL_LEN,
 	     "ArgiSense settings record must fit in one Zephyr settings value");
 
+struct argisense_runtime_config_v1 {
+	uint16_t schema_version;
+	uint16_t struct_size;
+	uint32_t measurement_period_seconds;
+	uint32_t measurement_window_ms;
+	uint32_t methane_warmup_seconds;
+	uint32_t methane_read_period_ms;
+	uint32_t humidity_read_period_seconds;
+	int32_t methane_dac_range_low_ppm;
+	int32_t methane_dac_range_high_ppm;
+	int32_t pressure_dac_range_low_pa;
+	int32_t pressure_dac_range_high_pa;
+	int32_t dac_min_current_ua;
+	int32_t dac_max_current_ua;
+	int32_t dac_fault_current_ua;
+	int32_t methane_zero_offset_ppm_x100;
+	int32_t pressure_offset_pa;
+	int32_t dac0_4ma_trim_ua;
+	int32_t dac0_20ma_trim_ua;
+	int32_t dac1_4ma_trim_ua;
+	int32_t dac1_20ma_trim_ua;
+	uint32_t rs485_baudrate;
+	uint8_t modbus_address;
+	uint8_t rs485_termination_enabled;
+	uint8_t rs485_parity;
+	uint8_t rs485_stop_bits;
+};
+
 static struct argisense_runtime_config runtime_config;
 static bool settings_loaded_from_storage;
+
+static void argisense_settings_normalize(
+	struct argisense_runtime_config *config)
+{
+	if (config->rs485_stop_bits == 0U) {
+		config->rs485_stop_bits = ARGISENSE_RS485_STOP_BITS_2;
+	}
+
+	if (config->rs485_data_bits == 0U) {
+		config->rs485_data_bits = ARGISENSE_RS485_DATA_BITS_8;
+	}
+}
 
 static void argisense_settings_defaults(struct argisense_runtime_config *config)
 {
@@ -53,7 +93,22 @@ static void argisense_settings_defaults(struct argisense_runtime_config *config)
 		.dac_fault_current_ua = CONFIG_ARGISENSE_DAC_FAULT_CURRENT_UA,
 		.rs485_baudrate = DT_PROP(ARGISENSE_RS485_NODE, current_speed),
 		.modbus_address = 1U,
+		.rs485_parity = ARGISENSE_RS485_PARITY_NONE,
+		.rs485_stop_bits = ARGISENSE_RS485_STOP_BITS_2,
+		.rs485_data_bits = ARGISENSE_RS485_DATA_BITS_8,
 	};
+}
+
+static void argisense_settings_migrate_v1(
+	const struct argisense_runtime_config_v1 *old_config,
+	struct argisense_runtime_config *new_config)
+{
+	memset(new_config, 0, sizeof(*new_config));
+	memcpy(new_config, old_config, sizeof(*old_config));
+	new_config->schema_version = ARGISENSE_SETTINGS_SCHEMA_VERSION;
+	new_config->struct_size = sizeof(*new_config);
+	new_config->rs485_data_bits = ARGISENSE_RS485_DATA_BITS_8;
+	argisense_settings_normalize(new_config);
 }
 
 static int argisense_settings_validate(
@@ -112,6 +167,16 @@ static int argisense_settings_validate(
 		return -EINVAL;
 	}
 
+	if (config->rs485_parity > ARGISENSE_RS485_PARITY_EVEN ||
+	    (config->rs485_stop_bits != ARGISENSE_RS485_STOP_BITS_1 &&
+	     config->rs485_stop_bits != ARGISENSE_RS485_STOP_BITS_2)) {
+		return -EINVAL;
+	}
+
+	if (config->rs485_data_bits != ARGISENSE_RS485_DATA_BITS_8) {
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -138,6 +203,7 @@ static int argisense_settings_set_handler(const char *name, size_t len,
 					  void *cb_arg)
 {
 	struct argisense_runtime_config loaded;
+	struct argisense_runtime_config_v1 loaded_v1;
 	const char *next;
 	ssize_t bytes_read;
 	int ret;
@@ -147,20 +213,41 @@ static int argisense_settings_set_handler(const char *name, size_t len,
 		return -ENOENT;
 	}
 
-	if (len != sizeof(loaded)) {
+	if (len == sizeof(loaded_v1)) {
+		bytes_read = read_cb(cb_arg, &loaded_v1, sizeof(loaded_v1));
+		if (bytes_read < 0) {
+			return (int)bytes_read;
+		}
+
+		if (bytes_read != sizeof(loaded_v1)) {
+			return -EIO;
+		}
+
+		if (loaded_v1.schema_version != 1U ||
+		    loaded_v1.struct_size != sizeof(loaded_v1)) {
+			LOG_WRN("Ignoring incompatible v1 settings record");
+			return 0;
+		}
+
+		argisense_settings_migrate_v1(&loaded_v1, &loaded);
+		LOG_INF("Migrated persistent settings schema v1 to v%u",
+			ARGISENSE_SETTINGS_SCHEMA_VERSION);
+	} else if (len == sizeof(loaded)) {
+		bytes_read = read_cb(cb_arg, &loaded, sizeof(loaded));
+		if (bytes_read < 0) {
+			return (int)bytes_read;
+		}
+
+		if (bytes_read != sizeof(loaded)) {
+			return -EIO;
+		}
+	} else {
 		LOG_WRN("Ignoring incompatible settings record size %u",
 			(unsigned int)len);
 		return 0;
 	}
 
-	bytes_read = read_cb(cb_arg, &loaded, sizeof(loaded));
-	if (bytes_read < 0) {
-		return (int)bytes_read;
-	}
-
-	if (bytes_read != sizeof(loaded)) {
-		return -EIO;
-	}
+	argisense_settings_normalize(&loaded);
 
 	ret = argisense_settings_validate(&loaded);
 	if (ret < 0) {
@@ -189,14 +276,17 @@ static struct settings_handler argisense_settings_handler = {
 
 int argisense_settings_save(const struct argisense_runtime_config *config)
 {
+	struct argisense_runtime_config normalized = *config;
 	int ret;
 
-	ret = argisense_settings_validate(config);
+	argisense_settings_normalize(&normalized);
+
+	ret = argisense_settings_validate(&normalized);
 	if (ret < 0) {
 		return ret;
 	}
 
-	runtime_config = *config;
+	runtime_config = normalized;
 
 	return settings_save_one(ARGISENSE_SETTINGS_CONFIG_PATH, &runtime_config,
 				 sizeof(runtime_config));
@@ -234,8 +324,10 @@ void argisense_settings_log_summary(void)
 		runtime_config.dac_min_current_ua,
 		runtime_config.dac_max_current_ua,
 		runtime_config.dac_fault_current_ua);
-	LOG_INF("Runtime RS485 config: modbus-address=%u baud=%u termination=%s",
+	LOG_INF("Runtime RS485 config: modbus-address=%u baud=%u data-bits=%u parity=%u stop-bits=%u termination=%s",
 		runtime_config.modbus_address, runtime_config.rs485_baudrate,
+		runtime_config.rs485_data_bits, runtime_config.rs485_parity,
+		runtime_config.rs485_stop_bits,
 		runtime_config.rs485_termination_enabled ? "on" : "off");
 }
 

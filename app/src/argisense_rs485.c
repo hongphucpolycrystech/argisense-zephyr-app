@@ -35,6 +35,44 @@ static struct modbus_user_callbacks argisense_rs485_callbacks = {
 	.holding_reg_wr = argisense_rs485_holding_reg_wr,
 };
 
+static enum uart_config_parity rs485_uart_parity(uint8_t parity)
+{
+	switch (parity) {
+	case ARGISENSE_RS485_PARITY_ODD:
+		return UART_CFG_PARITY_ODD;
+	case ARGISENSE_RS485_PARITY_EVEN:
+		return UART_CFG_PARITY_EVEN;
+	case ARGISENSE_RS485_PARITY_NONE:
+	default:
+		return UART_CFG_PARITY_NONE;
+	}
+}
+
+static enum uart_config_stop_bits rs485_uart_stop_bits(uint8_t stop_bits)
+{
+	switch (stop_bits) {
+	case ARGISENSE_RS485_STOP_BITS_1:
+		return UART_CFG_STOP_BITS_1;
+	case ARGISENSE_RS485_STOP_BITS_2:
+	default:
+		return UART_CFG_STOP_BITS_2;
+	}
+}
+
+static const char *rs485_parity_name(uint8_t parity)
+{
+	switch (parity) {
+	case ARGISENSE_RS485_PARITY_NONE:
+		return "none";
+	case ARGISENSE_RS485_PARITY_ODD:
+		return "odd";
+	case ARGISENSE_RS485_PARITY_EVEN:
+		return "even";
+	default:
+		return "invalid";
+	}
+}
+
 int argisense_rs485_init(void)
 {
 #if DT_NODE_HAS_STATUS(ARGISENSE_RS485_MODBUS_NODE, okay)
@@ -48,7 +86,8 @@ int argisense_rs485_init(void)
 		},
 		.serial = {
 			.baud = config->rs485_baudrate,
-			.parity = UART_CFG_PARITY_NONE,
+			.parity = rs485_uart_parity(config->rs485_parity),
+			.stop_bits = rs485_uart_stop_bits(config->rs485_stop_bits),
 		},
 	};
 	int ret;
@@ -67,9 +106,11 @@ int argisense_rs485_init(void)
 		return ret;
 	}
 
-	LOG_INF("RS485 Modbus RTU server ready on %s unit=%u baud=%u",
-		iface_name, config->modbus_address, config->rs485_baudrate);
-	LOG_INF("Register map v%u: live 0..33, config 40..59, diagnostics 70..82",
+	LOG_INF("RS485 Modbus RTU server ready on %s unit=%u baud=%u data-bits=%u parity=%s stop-bits=%u",
+		iface_name, config->modbus_address, config->rs485_baudrate,
+		config->rs485_data_bits, rs485_parity_name(config->rs485_parity),
+		config->rs485_stop_bits);
+	LOG_INF("Register map v%u: live 0..36, config 40..59, diagnostics 70..82",
 		ARGISENSE_REGISTER_MAP_VERSION);
 
 	return 0;
