@@ -216,8 +216,8 @@ Recommended behavior:
 ppm_x100 = percent_volume * 1,000,000
 ```
 
-- Handle Dynament byte-stuffed DLE/control characters in the final UART stream
-  parser before decoding the compact frame.
+- Handle Dynament byte-stuffed DLE/control characters in the UART stream parser
+  before decoding the compact frame.
 - Use a read timeout so the measurement loop cannot hang.
 - Track these fields in the data model:
   - methane concentration
@@ -384,12 +384,14 @@ Implemented holding-register map summary:
 | `30..36` | R/W | DAC current limits, command register, RS485 parity, stop bits, and data bits |
 | `40..59` | R/W | Methane/pressure DAC ranges, offsets, and DAC trim placeholders |
 | `70..82` | R | Dynament status/protocol, last sensor errors, MS5803 temperature/raw/CRC diagnostics, and HTU21D humidity/temperature/error diagnostics |
-| `1000..1035` | R/W | RS485 firmware-update control, status, image metadata, SHA-256, and command registers |
+| `1000..1035` | R/W | RS485 firmware-update control, status, service unlock, image metadata, SHA-256, and command registers |
 | `1100..` | R/W | RS485 firmware-update chunk payload window |
 
 The full register table is maintained in `README.md`. All multi-register values
 use high word first. Masters should read paired 32-bit values in one Modbus
 request, or compare the sample sequence before and after a larger read block.
+Writable 32-bit configuration registers stage the high word and commit the
+complete value when the matching low word is written.
 
 RS485 can also be used as the sealed-product service and firmware update path.
 The PC GUI in `tools/rs485_dfu/argisense_rs485_dfu_gui.py` has tabs for firmware
@@ -398,10 +400,11 @@ auto-detect an ArgiSense node by scanning COM ports, supported baud presets,
 8-bit Modbus RTU framing variants, parity, stop bits, and Unit IDs until
 register `0` returns device ID `0xA651`. The firmware update tab uploads
 `build/argisense-zephyr-app/zephyr/zephyr.signed.bin` over Modbus holding
-registers. The application writes the image to MCUboot `image-1`, verifies CRC32
-and SHA-256, then can mark the verified image for a test swap and reboot.
-MCUboot performs the swap on the next boot, and the application confirms the
-image after bring-up checks pass.
+registers. The GUI first writes the configured DFU service unlock key, then the
+application writes the image to MCUboot `image-1`, verifies CRC32 and SHA-256,
+and can mark the verified image for a test swap and reboot. MCUboot performs
+the swap on the next boot, and the application confirms the image only after a
+successful measurement and DAC output refresh.
 
 ## USB-C Firmware Update and Service Console
 
@@ -619,7 +622,7 @@ Implemented:
 - AT24C512C external EEPROM mapping through Zephyr's standard AT24 EEPROM
   driver, with read-only ArgiSense shell diagnostics.
 - GP8302 Zephyr DAC driver for two independent current-loop outputs.
-- Modbus RTU register map v6 with live data, settings, MCUboot version fields,
+- Modbus RTU register map v8 with live data, settings, MCUboot version fields,
   commands, diagnostics, and RS485 MCUboot image upload support.
 - USB-C composite CDC ACM profile for console/shell plus MCUmgr firmware update
   through the `argisense-usb-update` snippet.

@@ -185,9 +185,10 @@ mcumgr --conntype serial --connstring "dev=COMxx,baud=115200,mtu=128" reset
 ```
 
 After reboot, MCUboot swaps the new image from `image-1` into `image-0`. The
-application confirms the image with `boot_write_img_confirmed()` after bring-up
-checks pass. If a future version delays confirmation until after deeper sensor,
-RS485, and DAC health checks, MCUboot rollback can recover from a bad update.
+application confirms the image with `boot_write_img_confirmed()` only after a
+successful measurement cycle and DAC output refresh. If sensor or output health
+checks fail, MCUboot rollback can still recover from the test image on a later
+reset.
 On the current Windows bring-up machine, the MCUmgr update interface enumerated
 as `COM24` (`VID_2FE3&PID_0005&MI_02`) and responded to `image list` and
 `echo`; a full `zephyr.signed.bin` upload to slot 1 completed successfully.
@@ -229,7 +230,7 @@ The RS485 update path is application-level DFU:
 3. The firmware verifies CRC32 and SHA-256 against the uploaded image.
 4. The PC tool can mark the image for an MCUboot test swap and request reboot.
 5. MCUboot swaps the image on reboot, and the application confirms it after
-   bring-up checks.
+   a successful measurement and DAC output refresh.
 
 Build a signed image first:
 
@@ -260,7 +261,8 @@ available by selecting the USB-to-RS485 adapter COM port, the current Modbus
 baudrate, data bits, parity, stop bits, and unit ID. Then use:
 
 - `Firmware Update` to select `zephyr.signed.bin`, upload it, verify it, and
-  optionally reboot into the MCUboot test image.
+  optionally reboot into the MCUboot test image. The tab writes the configured
+  DFU unlock key before touching image metadata or payload registers.
 - `Sensors` to read methane, pressure, humidity, temperature, DAC current,
   status, sample sequence, and uptime. This tab can poll continuously and draw
   an auto-scaled trend graph.
@@ -269,7 +271,9 @@ baudrate, data bits, parity, stop bits, and unit ID. Then use:
 
 The default RS485 DFU chunk size is 96 bytes, which fits Zephyr's Modbus RTU
 buffer with margin. Use `Probe` first to confirm the unit responds and to read
-the firmware-reported maximum chunk.
+the firmware-reported maximum chunk. The default DFU unlock key is `0xA65D`;
+override `CONFIG_ARGISENSE_RS485_DFU_UNLOCK_KEY` in a private production
+configuration if RS485 DFU remains enabled in field firmware.
 
 The RS485 DFU holding-register window starts at address `1000`; it is documented
 in `tools/rs485_dfu/README.md`. You can inspect DFU state from the device shell:
@@ -394,7 +398,7 @@ build\argisense-zephyr-app\zephyr\zephyr.signed.bin
 build\argisense-zephyr-app\zephyr\zephyr.signed.hex
 ```
 
-The application calls `boot_write_img_confirmed()` after the basic board bring-up checks pass. That means a test update is only confirmed after GPIO power setup and both GP8302 I2C mappings are valid. As the firmware grows, move this confirmation later so it happens after methane, pressure, RS485, and DAC output self-tests also pass.
+The application calls `boot_write_img_confirmed()` only after a measurement cycle completes with valid methane and pressure samples and the DAC outputs are refreshed successfully. This keeps MCUboot test images rollback-capable if the updated firmware cannot read the primary sensors or drive the current-loop outputs.
 
 For initial bring-up, Zephyr/MCUboot may use the default development signing key. Do not use that key for production. Store production signing keys outside this repository, then configure the key path through the build environment or a private, ignored config fragment.
 
@@ -603,13 +607,16 @@ RS485 serial format settings are encoded as:
 | Parity | `0=none`, `1=odd`, `2=even` |
 | Stop bits | `1` or `2` |
 
-Holding register map v6, high word first for 32-bit values. Signed values and
-error codes use two's-complement representation.
+Holding register map v8, high word first for 32-bit values. Signed values and
+error codes use two's-complement representation. Writable 32-bit configuration
+registers in `40..59` stage the high word and commit the complete value when
+the matching low word is written, so Modbus masters should write each pair
+high-word first, low-word second.
 
 | Address | Access | Description |
 | --- | --- | --- |
 | `0` | R | Device ID, fixed `0xA651` |
-| `1` | R | Register map version, currently `6` |
+| `1` | R | Register map version, currently `8` |
 | `2` | R | Status flags: bit0 methane valid, bit1 pressure valid, bit2 sample ready, bit3 RS485 termination enabled, bit4 humidity valid, bit5 humidity error |
 | `3` | R/W | Modbus unit address, `1..247`; takes effect after reboot |
 | `4` | R | RS485 baudrate high word |
@@ -672,6 +679,8 @@ error codes use two's-complement representation.
 | `1012..1013` | R/W | RS485 DFU expected current chunk CRC32 |
 | `1014` | R | RS485 DFU maximum chunk bytes accepted by firmware |
 | `1015` | R | RS485 DFU last command |
+| `1016` | W | RS485 DFU unlock key; write `CONFIG_ARGISENSE_RS485_DFU_UNLOCK_KEY` before DFU writes |
+| `1017` | R | RS485 DFU unlock window remaining in seconds |
 | `1020..1035` | R/W | RS485 DFU expected image SHA-256, two bytes per register |
 | `1100..` | R/W | RS485 DFU chunk payload, two bytes per register |
 

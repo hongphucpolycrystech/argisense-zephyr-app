@@ -52,6 +52,8 @@ struct argisense_runtime_config_v1 {
 };
 
 static struct argisense_runtime_config runtime_config;
+static K_MUTEX_DEFINE(runtime_config_lock);
+static K_MUTEX_DEFINE(settings_save_lock);
 static bool settings_loaded_from_storage;
 
 static void argisense_settings_normalize(
@@ -183,16 +185,18 @@ static int argisense_settings_validate(
 static int argisense_settings_get_handler(const char *name, char *val,
 					  int val_len_max)
 {
+	struct argisense_runtime_config config;
 	const char *next;
 
 	if (settings_name_steq(name, ARGISENSE_SETTINGS_CONFIG_KEY, &next) &&
 	    !next) {
-		if (val_len_max < sizeof(runtime_config)) {
+		if (val_len_max < sizeof(config)) {
 			return -ENOMEM;
 		}
 
-		memcpy(val, &runtime_config, sizeof(runtime_config));
-		return sizeof(runtime_config);
+		argisense_settings_get_copy(&config);
+		memcpy(val, &config, sizeof(config));
+		return sizeof(config);
 	}
 
 	return -ENOENT;
@@ -255,7 +259,9 @@ static int argisense_settings_set_handler(const char *name, size_t len,
 		return 0;
 	}
 
+	k_mutex_lock(&runtime_config_lock, K_FOREVER);
 	runtime_config = loaded;
+	k_mutex_unlock(&runtime_config_lock);
 	settings_loaded_from_storage = true;
 	return 0;
 }
@@ -263,8 +269,12 @@ static int argisense_settings_set_handler(const char *name, size_t len,
 static int argisense_settings_export_handler(
 	int (*export_func)(const char *name, const void *val, size_t val_len))
 {
-	return export_func(ARGISENSE_SETTINGS_CONFIG_PATH, &runtime_config,
-			   sizeof(runtime_config));
+	struct argisense_runtime_config config;
+
+	argisense_settings_get_copy(&config);
+
+	return export_func(ARGISENSE_SETTINGS_CONFIG_PATH, &config,
+			   sizeof(config));
 }
 
 static struct settings_handler argisense_settings_handler = {
@@ -286,10 +296,21 @@ int argisense_settings_save(const struct argisense_runtime_config *config)
 		return ret;
 	}
 
-	runtime_config = normalized;
+	k_mutex_lock(&settings_save_lock, K_FOREVER);
+	ret = settings_save_one(ARGISENSE_SETTINGS_CONFIG_PATH, &normalized,
+				sizeof(normalized));
+	if (ret < 0) {
+		k_mutex_unlock(&settings_save_lock);
+		return ret;
+	}
 
-	return settings_save_one(ARGISENSE_SETTINGS_CONFIG_PATH, &runtime_config,
-				 sizeof(runtime_config));
+	k_mutex_lock(&runtime_config_lock, K_FOREVER);
+	runtime_config = normalized;
+	k_mutex_unlock(&runtime_config_lock);
+	settings_loaded_from_storage = true;
+	k_mutex_unlock(&settings_save_lock);
+
+	return 0;
 }
 
 int argisense_settings_reset_defaults(void)
@@ -306,29 +327,44 @@ const struct argisense_runtime_config *argisense_settings_get(void)
 	return &runtime_config;
 }
 
+void argisense_settings_get_copy(struct argisense_runtime_config *config)
+{
+	if (config == NULL) {
+		return;
+	}
+
+	k_mutex_lock(&runtime_config_lock, K_FOREVER);
+	*config = runtime_config;
+	k_mutex_unlock(&runtime_config_lock);
+}
+
 void argisense_settings_log_summary(void)
 {
+	struct argisense_runtime_config config;
+
+	argisense_settings_get_copy(&config);
+
 	LOG_INF("Settings source: %s",
 		settings_loaded_from_storage ? "storage" : "defaults");
 	LOG_INF("Runtime config: period=%us window=%ums methane-warmup=%us methane-read=%ums humidity-read=%us",
-		runtime_config.measurement_period_seconds,
-		runtime_config.measurement_window_ms,
-		runtime_config.methane_warmup_seconds,
-		runtime_config.methane_read_period_ms,
-		runtime_config.humidity_read_period_seconds);
+		config.measurement_period_seconds,
+		config.measurement_window_ms,
+		config.methane_warmup_seconds,
+		config.methane_read_period_ms,
+		config.humidity_read_period_seconds);
 	LOG_INF("Runtime DAC config: methane=%d..%d ppm pressure=%d..%d Pa current=%d..%d uA fault=%d uA",
-		runtime_config.methane_dac_range_low_ppm,
-		runtime_config.methane_dac_range_high_ppm,
-		runtime_config.pressure_dac_range_low_pa,
-		runtime_config.pressure_dac_range_high_pa,
-		runtime_config.dac_min_current_ua,
-		runtime_config.dac_max_current_ua,
-		runtime_config.dac_fault_current_ua);
+		config.methane_dac_range_low_ppm,
+		config.methane_dac_range_high_ppm,
+		config.pressure_dac_range_low_pa,
+		config.pressure_dac_range_high_pa,
+		config.dac_min_current_ua,
+		config.dac_max_current_ua,
+		config.dac_fault_current_ua);
 	LOG_INF("Runtime RS485 config: modbus-address=%u baud=%u data-bits=%u parity=%u stop-bits=%u termination=%s",
-		runtime_config.modbus_address, runtime_config.rs485_baudrate,
-		runtime_config.rs485_data_bits, runtime_config.rs485_parity,
-		runtime_config.rs485_stop_bits,
-		runtime_config.rs485_termination_enabled ? "on" : "off");
+		config.modbus_address, config.rs485_baudrate,
+		config.rs485_data_bits, config.rs485_parity,
+		config.rs485_stop_bits,
+		config.rs485_termination_enabled ? "on" : "off");
 }
 
 int argisense_settings_init(void)

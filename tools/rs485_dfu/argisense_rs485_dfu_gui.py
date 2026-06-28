@@ -45,6 +45,8 @@ DFU_REG_CHUNK_CRC32_HI = 1012
 DFU_REG_CHUNK_CRC32_LO = 1013
 DFU_REG_MAX_CHUNK_BYTES = 1014
 DFU_REG_LAST_COMMAND = 1015
+DFU_REG_UNLOCK_KEY = 1016
+DFU_REG_UNLOCK_REMAINING_S = 1017
 DFU_REG_SHA256_BASE = 1020
 DFU_REG_SHA256_COUNT = 16
 DFU_REG_DATA_BASE = 1100
@@ -105,6 +107,7 @@ STATUS_NAMES = {
 }
 
 DEFAULT_CHUNK_BYTES = 96
+DEFAULT_DFU_UNLOCK_KEY = "0xA65D"
 ARGISENSE_DEVICE_ID = 0xA651
 DISCOVERY_BAUDS = ("115200", "57600", "38400", "19200", "9600")
 DISCOVERY_PARITY_LABELS = ("None (N)", "Even (E)", "Odd (O)")
@@ -308,12 +311,14 @@ class Rs485DfuUploader:
         progress,
         chunk_bytes: int,
         reboot_after_upload: bool,
+        unlock_key: int,
     ) -> None:
         self.client = client
         self.log = log
         self.progress = progress
         self.chunk_bytes = chunk_bytes
         self.reboot_after_upload = reboot_after_upload
+        self.unlock_key = unlock_key
 
     def read_status(self) -> tuple[int, int]:
         status, error = self.client.read_holding(DFU_REG_STATUS, 2)
@@ -359,6 +364,13 @@ class Rs485DfuUploader:
         self.log(f"Size : {image_size} bytes")
         self.log(f"CRC32: 0x{image_crc:08X}")
         self.log(f"SHA256: {image_sha.hex()}")
+
+        self.log("Unlocking RS485 DFU service window...")
+        self.client.write_single(DFU_REG_UNLOCK_KEY, self.unlock_key)
+        remaining_s = self.client.read_holding(DFU_REG_UNLOCK_REMAINING_S, 1)[0]
+        if remaining_s == 0:
+            raise RuntimeError("device did not open the DFU service window")
+        self.log(f"DFU service window open for {remaining_s} seconds")
 
         device_max_chunk = self.client.read_holding(DFU_REG_MAX_CHUNK_BYTES, 1)[0]
         chunk_bytes = min(self.chunk_bytes, device_max_chunk)
@@ -484,6 +496,18 @@ def parse_unit_ids(text: str) -> list[int]:
     return result
 
 
+def parse_u16_text(text: str, field_name: str) -> int:
+    try:
+        value = int(text.strip(), 0)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a decimal or 0x-prefixed value.") from exc
+
+    if not 0 <= value <= 0xFFFF:
+        raise ValueError(f"{field_name} must be 0..0xFFFF.")
+
+    return value
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -504,9 +528,10 @@ class App(tk.Tk):
         self.stop_bits_var = tk.StringVar(value="2")
         self.unit_var = tk.StringVar(value="1")
         self.scan_units_var = tk.StringVar(value="1-10,247")
-        self.scan_all_ports_var = tk.BooleanVar(value=True)
+        self.scan_all_ports_var = tk.BooleanVar(value=False)
         self.timeout_var = tk.StringVar(value="1.0")
         self.chunk_var = tk.StringVar(value=str(DEFAULT_CHUNK_BYTES))
+        self.unlock_key_var = tk.StringVar(value=DEFAULT_DFU_UNLOCK_KEY)
         self.file_var = tk.StringVar()
         self.reboot_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Idle")
@@ -667,6 +692,12 @@ class App(tk.Tk):
             text="Mark test image and reboot after verify",
             variable=self.reboot_var,
         ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=6, pady=(0, 6))
+        ttk.Label(firmware, text="DFU unlock key").grid(
+            row=2, column=0, sticky=tk.W, padx=6, pady=(0, 6)
+        )
+        ttk.Entry(firmware, textvariable=self.unlock_key_var, width=12).grid(
+            row=2, column=0, sticky=tk.W, padx=(110, 6), pady=(0, 6)
+        )
 
         firmware.columnconfigure(0, weight=1)
 
@@ -871,6 +902,13 @@ class App(tk.Tk):
         if self.worker and self.worker.is_alive():
             messagebox.showinfo("ArgiSense RS485", "An operation is already running.")
             return
+        if self.scan_all_ports_var.get():
+            if not messagebox.askyesno(
+                "ArgiSense RS485",
+                "Auto Detect will open every COM port it can find and send "
+                "Modbus probe frames. Continue?",
+            ):
+                return
         try:
             parse_unit_ids(self.scan_units_var.get())
             timeout = float(self.timeout_var.get())
@@ -1224,6 +1262,11 @@ class App(tk.Tk):
                 status, error = client.read_holding(DFU_REG_STATUS, 2)
                 self.log(f"Register map version: {map_version}")
                 self.log(f"DFU max chunk: {max_chunk} bytes")
+                if map_version >= 7:
+                    remaining_s = client.read_holding(
+                        DFU_REG_UNLOCK_REMAINING_S, 1
+                    )[0]
+                    self.log(f"DFU unlock remaining: {remaining_s} seconds")
                 self.log(
                     f"DFU status: {STATUS_NAMES.get(status, status)} error={signed16(error)}"
                 )
@@ -1327,6 +1370,7 @@ class App(tk.Tk):
             image_path = Path(self.file_var.get())
             if not image_path.is_file():
                 raise FileNotFoundError("Select a valid firmware .bin file.")
+            unlock_key = parse_u16_text(self.unlock_key_var.get(), "DFU unlock key")
 
             client = self._make_client()
             try:
@@ -1336,6 +1380,7 @@ class App(tk.Tk):
                     progress=self.progress,
                     chunk_bytes=int(self.chunk_var.get()),
                     reboot_after_upload=self.reboot_var.get(),
+                    unlock_key=unlock_key,
                 )
                 uploader.upload(image_path)
                 self.messages.put(("done", "Upload complete"))

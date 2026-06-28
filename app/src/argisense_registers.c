@@ -148,8 +148,30 @@ struct argisense_firmware_info {
 	uint16_t active_slot;
 };
 
+enum argisense_i32_config_field {
+	ARGISENSE_I32_CONFIG_NONE = 0,
+	ARGISENSE_I32_CONFIG_METHANE_RANGE_LOW,
+	ARGISENSE_I32_CONFIG_METHANE_RANGE_HIGH,
+	ARGISENSE_I32_CONFIG_PRESSURE_RANGE_LOW,
+	ARGISENSE_I32_CONFIG_PRESSURE_RANGE_HIGH,
+	ARGISENSE_I32_CONFIG_METHANE_ZERO_OFFSET,
+	ARGISENSE_I32_CONFIG_PRESSURE_OFFSET,
+	ARGISENSE_I32_CONFIG_DAC0_4MA_TRIM,
+	ARGISENSE_I32_CONFIG_DAC0_20MA_TRIM,
+	ARGISENSE_I32_CONFIG_DAC1_4MA_TRIM,
+	ARGISENSE_I32_CONFIG_DAC1_20MA_TRIM,
+};
+
+struct argisense_pending_i32_write {
+	enum argisense_i32_config_field field_id;
+	uint16_t high_word;
+	bool valid;
+};
+
 static struct argisense_register_snapshot sample_snapshot;
 static struct k_spinlock sample_lock;
+static K_MUTEX_DEFINE(register_write_lock);
+static struct argisense_pending_i32_write pending_i32_write;
 static bool reboot_required;
 static uint16_t last_command;
 static int16_t last_command_result;
@@ -174,14 +196,9 @@ static uint16_t reg_i32_lo(int32_t value)
 	return reg_u32_lo((uint32_t)value);
 }
 
-static int32_t reg_i32_replace_hi(int32_t current, uint16_t hi)
+static int32_t reg_i32_from_words(uint16_t hi, uint16_t lo)
 {
-	return (int32_t)((((uint32_t)hi) << 16) | ((uint32_t)current & 0xffffU));
-}
-
-static int32_t reg_i32_replace_lo(int32_t current, uint16_t lo)
-{
-	return (int32_t)(((uint32_t)current & 0xffff0000U) | lo);
+	return (int32_t)((((uint32_t)hi) << 16) | lo);
 }
 
 static void reboot_work_handler(struct k_work *work)
@@ -321,7 +338,7 @@ static struct argisense_register_snapshot sample_get(void)
 
 int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	const struct argisense_register_snapshot snapshot = sample_get();
 	struct argisense_firmware_info firmware_info;
 
@@ -329,6 +346,7 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 		return -EINVAL;
 	}
 
+	argisense_settings_get_copy(&config);
 	firmware_info_get(&firmware_info);
 
 	if (argisense_dfu_register_is_supported(addr)) {
@@ -343,30 +361,30 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 		*reg = ARGISENSE_REGISTER_MAP_VERSION;
 		return 0;
 	case ARGISENSE_REG_STATUS_FLAGS:
-		*reg = status_flags(&snapshot, config);
+		*reg = status_flags(&snapshot, &config);
 		return 0;
 	case ARGISENSE_REG_MODBUS_ADDRESS:
-		*reg = config->modbus_address;
+		*reg = config.modbus_address;
 		return 0;
 	case ARGISENSE_REG_BAUDRATE_HI:
-		*reg = reg_u32_hi(config->rs485_baudrate);
+		*reg = reg_u32_hi(config.rs485_baudrate);
 		return 0;
 	case ARGISENSE_REG_BAUDRATE_LO:
-		*reg = reg_u32_lo(config->rs485_baudrate);
+		*reg = reg_u32_lo(config.rs485_baudrate);
 		return 0;
 	case ARGISENSE_REG_MEASUREMENT_PERIOD_SECONDS:
-		*reg = (uint16_t)MIN(config->measurement_period_seconds,
+		*reg = (uint16_t)MIN(config.measurement_period_seconds,
 				      UINT16_MAX);
 		return 0;
 	case ARGISENSE_REG_MEASUREMENT_WINDOW_MS:
-		*reg = (uint16_t)MIN(config->measurement_window_ms,
+		*reg = (uint16_t)MIN(config.measurement_window_ms,
 				      UINT16_MAX);
 		return 0;
 	case ARGISENSE_REG_BAUD_PRESET:
-		*reg = baud_preset_from_baud(config->rs485_baudrate);
+		*reg = baud_preset_from_baud(config.rs485_baudrate);
 		return 0;
 	case ARGISENSE_REG_TERMINATION_ENABLED:
-		*reg = config->rs485_termination_enabled != 0U ? 1U : 0U;
+		*reg = config.rs485_termination_enabled != 0U ? 1U : 0U;
 		return 0;
 	case ARGISENSE_REG_METHANE_PPM_X100_HI:
 		*reg = reg_i32_hi(snapshot.methane_ppm_x100);
@@ -429,85 +447,85 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 		*reg = (uint16_t)last_command_result;
 		return 0;
 	case ARGISENSE_REG_DAC_MIN_CURRENT_UA:
-		*reg = (uint16_t)config->dac_min_current_ua;
+		*reg = (uint16_t)config.dac_min_current_ua;
 		return 0;
 	case ARGISENSE_REG_DAC_MAX_CURRENT_UA:
-		*reg = (uint16_t)config->dac_max_current_ua;
+		*reg = (uint16_t)config.dac_max_current_ua;
 		return 0;
 	case ARGISENSE_REG_DAC_FAULT_CURRENT_UA:
-		*reg = (uint16_t)config->dac_fault_current_ua;
+		*reg = (uint16_t)config.dac_fault_current_ua;
 		return 0;
 	case ARGISENSE_REG_COMMAND:
 		*reg = ARGISENSE_REGISTER_COMMAND_NONE;
 		return 0;
 	case ARGISENSE_REG_RS485_PARITY:
-		*reg = config->rs485_parity;
+		*reg = config.rs485_parity;
 		return 0;
 	case ARGISENSE_REG_RS485_STOP_BITS:
-		*reg = config->rs485_stop_bits;
+		*reg = config.rs485_stop_bits;
 		return 0;
 	case ARGISENSE_REG_RS485_DATA_BITS:
-		*reg = config->rs485_data_bits;
+		*reg = config.rs485_data_bits;
 		return 0;
 	case ARGISENSE_REG_METHANE_RANGE_LOW_HI:
-		*reg = reg_i32_hi(config->methane_dac_range_low_ppm);
+		*reg = reg_i32_hi(config.methane_dac_range_low_ppm);
 		return 0;
 	case ARGISENSE_REG_METHANE_RANGE_LOW_LO:
-		*reg = reg_i32_lo(config->methane_dac_range_low_ppm);
+		*reg = reg_i32_lo(config.methane_dac_range_low_ppm);
 		return 0;
 	case ARGISENSE_REG_METHANE_RANGE_HIGH_HI:
-		*reg = reg_i32_hi(config->methane_dac_range_high_ppm);
+		*reg = reg_i32_hi(config.methane_dac_range_high_ppm);
 		return 0;
 	case ARGISENSE_REG_METHANE_RANGE_HIGH_LO:
-		*reg = reg_i32_lo(config->methane_dac_range_high_ppm);
+		*reg = reg_i32_lo(config.methane_dac_range_high_ppm);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_RANGE_LOW_HI:
-		*reg = reg_i32_hi(config->pressure_dac_range_low_pa);
+		*reg = reg_i32_hi(config.pressure_dac_range_low_pa);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_RANGE_LOW_LO:
-		*reg = reg_i32_lo(config->pressure_dac_range_low_pa);
+		*reg = reg_i32_lo(config.pressure_dac_range_low_pa);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_RANGE_HIGH_HI:
-		*reg = reg_i32_hi(config->pressure_dac_range_high_pa);
+		*reg = reg_i32_hi(config.pressure_dac_range_high_pa);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_RANGE_HIGH_LO:
-		*reg = reg_i32_lo(config->pressure_dac_range_high_pa);
+		*reg = reg_i32_lo(config.pressure_dac_range_high_pa);
 		return 0;
 	case ARGISENSE_REG_METHANE_ZERO_OFFSET_HI:
-		*reg = reg_i32_hi(config->methane_zero_offset_ppm_x100);
+		*reg = reg_i32_hi(config.methane_zero_offset_ppm_x100);
 		return 0;
 	case ARGISENSE_REG_METHANE_ZERO_OFFSET_LO:
-		*reg = reg_i32_lo(config->methane_zero_offset_ppm_x100);
+		*reg = reg_i32_lo(config.methane_zero_offset_ppm_x100);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_OFFSET_HI:
-		*reg = reg_i32_hi(config->pressure_offset_pa);
+		*reg = reg_i32_hi(config.pressure_offset_pa);
 		return 0;
 	case ARGISENSE_REG_PRESSURE_OFFSET_LO:
-		*reg = reg_i32_lo(config->pressure_offset_pa);
+		*reg = reg_i32_lo(config.pressure_offset_pa);
 		return 0;
 	case ARGISENSE_REG_DAC0_4MA_TRIM_HI:
-		*reg = reg_i32_hi(config->dac0_4ma_trim_ua);
+		*reg = reg_i32_hi(config.dac0_4ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC0_4MA_TRIM_LO:
-		*reg = reg_i32_lo(config->dac0_4ma_trim_ua);
+		*reg = reg_i32_lo(config.dac0_4ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC0_20MA_TRIM_HI:
-		*reg = reg_i32_hi(config->dac0_20ma_trim_ua);
+		*reg = reg_i32_hi(config.dac0_20ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC0_20MA_TRIM_LO:
-		*reg = reg_i32_lo(config->dac0_20ma_trim_ua);
+		*reg = reg_i32_lo(config.dac0_20ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC1_4MA_TRIM_HI:
-		*reg = reg_i32_hi(config->dac1_4ma_trim_ua);
+		*reg = reg_i32_hi(config.dac1_4ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC1_4MA_TRIM_LO:
-		*reg = reg_i32_lo(config->dac1_4ma_trim_ua);
+		*reg = reg_i32_lo(config.dac1_4ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC1_20MA_TRIM_HI:
-		*reg = reg_i32_hi(config->dac1_20ma_trim_ua);
+		*reg = reg_i32_hi(config.dac1_20ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_DAC1_20MA_TRIM_LO:
-		*reg = reg_i32_lo(config->dac1_20ma_trim_ua);
+		*reg = reg_i32_lo(config.dac1_20ma_trim_ua);
 		return 0;
 	case ARGISENSE_REG_METHANE_STATUS_FLAGS:
 		*reg = snapshot.methane_status_flags;
@@ -572,14 +590,29 @@ static int save_config(const struct argisense_runtime_config *config,
 }
 
 static int save_i32_config_word(struct argisense_runtime_config *config,
-				int32_t *field, uint16_t reg, bool high_word,
+				int32_t *field,
+				enum argisense_i32_config_field field_id,
+				uint16_t reg, bool high_word,
 				const char *field_name)
 {
+	uint16_t staged_high_word;
+
 	if (high_word) {
-		*field = reg_i32_replace_hi(*field, reg);
-	} else {
-		*field = reg_i32_replace_lo(*field, reg);
+		pending_i32_write.field_id = field_id;
+		pending_i32_write.high_word = reg;
+		pending_i32_write.valid = true;
+		LOG_DBG("Staged high word for %s", field_name);
+		return 0;
 	}
+
+	staged_high_word = reg_i32_hi(*field);
+	if (pending_i32_write.valid &&
+	    pending_i32_write.field_id == field_id) {
+		staged_high_word = pending_i32_write.high_word;
+	}
+
+	pending_i32_write.valid = false;
+	*field = reg_i32_from_words(staged_high_word, reg);
 
 	return save_config(config, field_name);
 }
@@ -627,11 +660,13 @@ static int handle_command(uint16_t command)
 	return ret;
 }
 
-int argisense_register_write_holding(uint16_t addr, uint16_t reg)
+static int argisense_register_write_holding_locked(uint16_t addr, uint16_t reg)
 {
-	struct argisense_runtime_config config = *argisense_settings_get();
+	struct argisense_runtime_config config;
 	uint32_t baudrate;
 	int ret;
+
+	argisense_settings_get_copy(&config);
 
 	if (argisense_dfu_register_is_supported(addr)) {
 		return argisense_dfu_register_write(addr, reg);
@@ -737,76 +772,107 @@ int argisense_register_write_holding(uint16_t addr, uint16_t reg)
 	case ARGISENSE_REG_METHANE_RANGE_LOW_HI:
 		return save_i32_config_word(&config,
 					    &config.methane_dac_range_low_ppm,
+					    ARGISENSE_I32_CONFIG_METHANE_RANGE_LOW,
 					    reg, true, "methane-range-low-ppm");
 	case ARGISENSE_REG_METHANE_RANGE_LOW_LO:
 		return save_i32_config_word(&config,
 					    &config.methane_dac_range_low_ppm,
+					    ARGISENSE_I32_CONFIG_METHANE_RANGE_LOW,
 					    reg, false, "methane-range-low-ppm");
 	case ARGISENSE_REG_METHANE_RANGE_HIGH_HI:
 		return save_i32_config_word(&config,
 					    &config.methane_dac_range_high_ppm,
+					    ARGISENSE_I32_CONFIG_METHANE_RANGE_HIGH,
 					    reg, true, "methane-range-high-ppm");
 	case ARGISENSE_REG_METHANE_RANGE_HIGH_LO:
 		return save_i32_config_word(&config,
 					    &config.methane_dac_range_high_ppm,
+					    ARGISENSE_I32_CONFIG_METHANE_RANGE_HIGH,
 					    reg, false, "methane-range-high-ppm");
 	case ARGISENSE_REG_PRESSURE_RANGE_LOW_HI:
 		return save_i32_config_word(&config,
 					    &config.pressure_dac_range_low_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_RANGE_LOW,
 					    reg, true, "pressure-range-low-pa");
 	case ARGISENSE_REG_PRESSURE_RANGE_LOW_LO:
 		return save_i32_config_word(&config,
 					    &config.pressure_dac_range_low_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_RANGE_LOW,
 					    reg, false, "pressure-range-low-pa");
 	case ARGISENSE_REG_PRESSURE_RANGE_HIGH_HI:
 		return save_i32_config_word(&config,
 					    &config.pressure_dac_range_high_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_RANGE_HIGH,
 					    reg, true, "pressure-range-high-pa");
 	case ARGISENSE_REG_PRESSURE_RANGE_HIGH_LO:
 		return save_i32_config_word(&config,
 					    &config.pressure_dac_range_high_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_RANGE_HIGH,
 					    reg, false, "pressure-range-high-pa");
 	case ARGISENSE_REG_METHANE_ZERO_OFFSET_HI:
 		return save_i32_config_word(&config,
 					    &config.methane_zero_offset_ppm_x100,
+					    ARGISENSE_I32_CONFIG_METHANE_ZERO_OFFSET,
 					    reg, true, "methane-zero-offset");
 	case ARGISENSE_REG_METHANE_ZERO_OFFSET_LO:
 		return save_i32_config_word(&config,
 					    &config.methane_zero_offset_ppm_x100,
+					    ARGISENSE_I32_CONFIG_METHANE_ZERO_OFFSET,
 					    reg, false, "methane-zero-offset");
 	case ARGISENSE_REG_PRESSURE_OFFSET_HI:
 		return save_i32_config_word(&config, &config.pressure_offset_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_OFFSET,
 					    reg, true, "pressure-offset-pa");
 	case ARGISENSE_REG_PRESSURE_OFFSET_LO:
 		return save_i32_config_word(&config, &config.pressure_offset_pa,
+					    ARGISENSE_I32_CONFIG_PRESSURE_OFFSET,
 					    reg, false, "pressure-offset-pa");
 	case ARGISENSE_REG_DAC0_4MA_TRIM_HI:
 		return save_i32_config_word(&config, &config.dac0_4ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC0_4MA_TRIM,
 					    reg, true, "dac0-4ma-trim-ua");
 	case ARGISENSE_REG_DAC0_4MA_TRIM_LO:
 		return save_i32_config_word(&config, &config.dac0_4ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC0_4MA_TRIM,
 					    reg, false, "dac0-4ma-trim-ua");
 	case ARGISENSE_REG_DAC0_20MA_TRIM_HI:
 		return save_i32_config_word(&config, &config.dac0_20ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC0_20MA_TRIM,
 					    reg, true, "dac0-20ma-trim-ua");
 	case ARGISENSE_REG_DAC0_20MA_TRIM_LO:
 		return save_i32_config_word(&config, &config.dac0_20ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC0_20MA_TRIM,
 					    reg, false, "dac0-20ma-trim-ua");
 	case ARGISENSE_REG_DAC1_4MA_TRIM_HI:
 		return save_i32_config_word(&config, &config.dac1_4ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC1_4MA_TRIM,
 					    reg, true, "dac1-4ma-trim-ua");
 	case ARGISENSE_REG_DAC1_4MA_TRIM_LO:
 		return save_i32_config_word(&config, &config.dac1_4ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC1_4MA_TRIM,
 					    reg, false, "dac1-4ma-trim-ua");
 	case ARGISENSE_REG_DAC1_20MA_TRIM_HI:
 		return save_i32_config_word(&config, &config.dac1_20ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC1_20MA_TRIM,
 					    reg, true, "dac1-20ma-trim-ua");
 	case ARGISENSE_REG_DAC1_20MA_TRIM_LO:
 		return save_i32_config_word(&config, &config.dac1_20ma_trim_ua,
+					    ARGISENSE_I32_CONFIG_DAC1_20MA_TRIM,
 					    reg, false, "dac1-20ma-trim-ua");
 	default:
 		return -ENOTSUP;
 	}
+}
+
+int argisense_register_write_holding(uint16_t addr, uint16_t reg)
+{
+	int ret;
+
+	k_mutex_lock(&register_write_lock, K_FOREVER);
+	ret = argisense_register_write_holding_locked(addr, reg);
+	k_mutex_unlock(&register_write_lock);
+
+	return ret;
 }
 
 const char *argisense_register_holding_name(uint16_t addr)

@@ -53,6 +53,7 @@ struct argisense_dfu_state {
 	uint16_t status;
 	uint16_t last_command;
 	int16_t last_error;
+	int64_t unlocked_until_ms;
 	bool context_open;
 	bool verified;
 };
@@ -96,6 +97,49 @@ static void set_error(int error)
 static void clear_error(void)
 {
 	dfu.last_error = 0;
+}
+
+static uint16_t unlock_remaining_seconds(void)
+{
+	const int64_t now_ms = k_uptime_get();
+	int64_t remaining_ms;
+
+	if (dfu.unlocked_until_ms <= now_ms) {
+		return 0U;
+	}
+
+	remaining_ms = dfu.unlocked_until_ms - now_ms;
+
+	return (uint16_t)MIN((remaining_ms + MSEC_PER_SEC - 1) / MSEC_PER_SEC,
+			     UINT16_MAX);
+}
+
+static bool dfu_is_unlocked(void)
+{
+	return unlock_remaining_seconds() > 0U;
+}
+
+static int command_unlock(uint16_t key)
+{
+	if (key != (uint16_t)CONFIG_ARGISENSE_RS485_DFU_UNLOCK_KEY) {
+		set_error(-EACCES);
+		LOG_WRN("RS485 DFU unlock rejected");
+		return -EACCES;
+	}
+
+	dfu.unlocked_until_ms =
+		k_uptime_get() +
+		((int64_t)CONFIG_ARGISENSE_RS485_DFU_UNLOCK_WINDOW_SECONDS *
+		 MSEC_PER_SEC);
+	clear_error();
+	if (dfu.status == ARGISENSE_DFU_STATUS_ERROR && !dfu.context_open) {
+		dfu.status = ARGISENSE_DFU_STATUS_IDLE;
+	}
+
+	LOG_INF("RS485 DFU unlocked for %u seconds",
+		CONFIG_ARGISENSE_RS485_DFU_UNLOCK_WINDOW_SECONDS);
+
+	return 0;
 }
 
 static void close_context_if_open(void)
@@ -352,7 +396,7 @@ static int execute_command(uint16_t command)
 bool argisense_dfu_register_is_supported(uint16_t addr)
 {
 	return (addr >= ARGISENSE_DFU_REG_CONTROL &&
-		addr <= ARGISENSE_DFU_REG_LAST_COMMAND) ||
+		addr <= ARGISENSE_DFU_REG_UNLOCK_REMAINING_S) ||
 	       (addr >= ARGISENSE_DFU_REG_SHA256_BASE &&
 		addr < (ARGISENSE_DFU_REG_SHA256_BASE + ARGISENSE_DFU_REG_SHA256_COUNT)) ||
 	       (addr >= ARGISENSE_DFU_REG_DATA_BASE &&
@@ -436,6 +480,12 @@ int argisense_dfu_register_read(uint16_t addr, uint16_t *reg)
 	case ARGISENSE_DFU_REG_LAST_COMMAND:
 		*reg = dfu.last_command;
 		break;
+	case ARGISENSE_DFU_REG_UNLOCK_KEY:
+		*reg = 0U;
+		break;
+	case ARGISENSE_DFU_REG_UNLOCK_REMAINING_S:
+		*reg = unlock_remaining_seconds();
+		break;
 	default:
 		ret = -ENOTSUP;
 		break;
@@ -451,6 +501,19 @@ int argisense_dfu_register_write(uint16_t addr, uint16_t reg)
 	int ret = 0;
 
 	k_mutex_lock(&dfu.lock, K_FOREVER);
+
+	if (addr == ARGISENSE_DFU_REG_UNLOCK_KEY) {
+		ret = command_unlock(reg);
+		goto out;
+	}
+
+	if (!dfu_is_unlocked()) {
+		ret = -EACCES;
+		set_error(ret);
+		LOG_WRN("RS485 DFU write to register %u rejected: service window is locked",
+			addr);
+		goto out;
+	}
 
 	if (addr >= ARGISENSE_DFU_REG_SHA256_BASE &&
 	    addr < (ARGISENSE_DFU_REG_SHA256_BASE + ARGISENSE_DFU_REG_SHA256_COUNT)) {
@@ -568,6 +631,10 @@ const char *argisense_dfu_register_name(uint16_t addr)
 		return "dfu_max_chunk_bytes";
 	case ARGISENSE_DFU_REG_LAST_COMMAND:
 		return "dfu_last_command";
+	case ARGISENSE_DFU_REG_UNLOCK_KEY:
+		return "dfu_unlock_key";
+	case ARGISENSE_DFU_REG_UNLOCK_REMAINING_S:
+		return "dfu_unlock_remaining_s";
 	default:
 		return NULL;
 	}

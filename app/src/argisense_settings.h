@@ -54,6 +54,8 @@ int argisense_settings_init(void);
 
 const struct argisense_runtime_config *argisense_settings_get(void);
 
+void argisense_settings_get_copy(struct argisense_runtime_config *config);
+
 int argisense_settings_save(const struct argisense_runtime_config *config);
 
 int argisense_settings_reset_defaults(void);

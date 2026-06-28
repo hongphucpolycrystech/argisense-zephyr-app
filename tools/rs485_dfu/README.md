@@ -6,8 +6,8 @@ the external RS485 Modbus RTU port.
 The tool provides three operator views:
 
 - `Firmware Update`: upload an MCUboot signed binary to the secondary image
-  slot, verify SHA-256 on the device, then optionally mark the image for an
-  MCUboot test swap and reboot.
+  slot after writing the DFU service unlock key, verify SHA-256 on the device,
+  then optionally mark the image for an MCUboot test swap and reboot.
 - `Sensors`: read methane, pressure, humidity, temperature, DAC current, status,
   sequence, and uptime registers. The tab can poll continuously and draw an
   auto-scaled trend graph.
@@ -47,7 +47,8 @@ build\argisense-zephyr-app\zephyr\zephyr.signed.bin
 ```
 
 Use the default 96-byte chunk size unless the firmware reports a lower device
-maximum during `Probe`.
+maximum during `Probe`. The default unlock key is `0xA65D`; enter the key that
+matches `CONFIG_ARGISENSE_RS485_DFU_UNLOCK_KEY` for the target firmware.
 
 The default firmware transport setting is 8 data bits, no parity, and 2 stop
 bits, matching Modbus RTU no-parity framing. If the device is configured for
@@ -59,8 +60,10 @@ changes such as unit ID, baud, data bits, parity, and stop bits are saved
 immediately but take effect after device reboot.
 
 `Auto Detect` stops at the first valid ArgiSense response. If multiple
-ArgiSense devices are on the same RS485 bus, set `Scan IDs` to a narrow range or
-disable `All COM ports` and select the intended adapter before scanning.
+ArgiSense devices are on the same RS485 bus, set `Scan IDs` to a narrow range.
+The GUI scans only the selected COM port by default. Enable `All COM ports` only
+when you deliberately want the tool to open every detected serial port and send
+Modbus probe frames; the GUI asks for confirmation before doing this.
 
 ## Service Registers
 
@@ -117,9 +120,15 @@ The PC tool uses these holding registers:
 1013  dfu_chunk_crc32_lo
 1014  dfu_max_chunk_bytes
 1015  dfu_last_command
+1016  dfu_unlock_key
+1017  dfu_unlock_remaining_s
 1020..1035  dfu_sha256
 1100..      dfu_chunk_data
 ```
+
+Write the configured service key to `1016` before writing image metadata,
+SHA-256, chunk payload, or DFU control commands. Register `1017` reports the
+remaining unlock window in seconds.
 
 Control commands:
 

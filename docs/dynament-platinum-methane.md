@@ -135,8 +135,9 @@ The gas value is a decimal percentage value, not an integer. The example
 `00 00 7A C3` decodes to `-250.0`, which Dynament uses for warm-up or fault
 conditions.
 
-The protocol can byte-stuff DLE/control characters, so a real UART stream parser
-must handle escaped bytes before passing a compact frame to the live-data-simple
+The protocol can byte-stuff DLE/control characters. The driver reads the UART
+stream as `DLE + DAT + length + payload + DLE + EOF + checksum`, unescapes
+stuffed payload bytes, then passes a compact frame to the live-data-simple
 decoder.
 
 ## Firmware Data Mapping
@@ -173,12 +174,12 @@ Implemented now:
 - `uart4` board node for the Dynament methane sensor.
 - Out-of-tree Zephyr sensor driver in `drivers/sensor/dynament_platinum`.
 - Startup mapping check through the methane sensor device.
-- AN0007 live-data-simple UART request and compact-frame parser in the driver.
+- AN0007 live-data-simple UART request, stream parser, byte-stuff handling, and
+  compact-frame decoder in the driver.
 - Default idle policy that keeps `+3V3_PRE` powered.
 
 Still required before production:
 
-- Full UART stream state machine with DLE byte-stuff handling.
 - Retry policy around the current blocking read timeout.
 - Exact interpretation of Dynament status flags from TDS0045.
 - Optional Modbus RTU mode if the ordered sensor is configured for Modbus

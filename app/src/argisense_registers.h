@@ -9,7 +9,7 @@
 
 #include "current_loop_output.h"
 
-#define ARGISENSE_REGISTER_MAP_VERSION 6U
+#define ARGISENSE_REGISTER_MAP_VERSION 8U
 
 int argisense_register_read_holding(uint16_t addr, uint16_t *reg);
 

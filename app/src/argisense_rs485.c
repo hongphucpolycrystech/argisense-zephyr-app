@@ -76,21 +76,22 @@ static const char *rs485_parity_name(uint8_t parity)
 int argisense_rs485_init(void)
 {
 #if DT_NODE_HAS_STATUS(ARGISENSE_RS485_MODBUS_NODE, okay)
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	const char iface_name[] = { DEVICE_DT_NAME(ARGISENSE_RS485_MODBUS_NODE) };
 	struct modbus_iface_param server_param = {
 		.mode = MODBUS_MODE_RTU,
 		.server = {
 			.user_cb = &argisense_rs485_callbacks,
-			.unit_id = config->modbus_address,
-		},
-		.serial = {
-			.baud = config->rs485_baudrate,
-			.parity = rs485_uart_parity(config->rs485_parity),
-			.stop_bits = rs485_uart_stop_bits(config->rs485_stop_bits),
 		},
 	};
 	int ret;
+
+	argisense_settings_get_copy(&config);
+
+	server_param.server.unit_id = config.modbus_address;
+	server_param.serial.baud = config.rs485_baudrate;
+	server_param.serial.parity = rs485_uart_parity(config.rs485_parity);
+	server_param.serial.stop_bits = rs485_uart_stop_bits(config.rs485_stop_bits);
 
 	rs485_iface = modbus_iface_get_by_name(iface_name);
 	if (rs485_iface < 0) {
@@ -107,9 +108,9 @@ int argisense_rs485_init(void)
 	}
 
 	LOG_INF("RS485 Modbus RTU server ready on %s unit=%u baud=%u data-bits=%u parity=%s stop-bits=%u",
-		iface_name, config->modbus_address, config->rs485_baudrate,
-		config->rs485_data_bits, rs485_parity_name(config->rs485_parity),
-		config->rs485_stop_bits);
+		iface_name, config.modbus_address, config.rs485_baudrate,
+		config.rs485_data_bits, rs485_parity_name(config.rs485_parity),
+		config.rs485_stop_bits);
 	LOG_INF("Register map v%u: live 0..36, config 40..59, diagnostics 70..82",
 		ARGISENSE_REGISTER_MAP_VERSION);
 

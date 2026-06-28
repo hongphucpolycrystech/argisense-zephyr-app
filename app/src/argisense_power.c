@@ -147,10 +147,12 @@ int argisense_power_configure(void)
 
 void argisense_power_idle_state(void)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
+
+	argisense_settings_get_copy(&config);
 
 	(void)set_gpio(&rs485_termination, "RS485 termination",
-		       config->rs485_termination_enabled != 0U);
+		       config.rs485_termination_enabled != 0U);
 	(void)set_gpio(&dac_power, "DAC power",
 		       IS_ENABLED(CONFIG_ARGISENSE_DAC_POWER_IDLE));
 	(void)set_gpio(&analog_power, "analog power", false);
@@ -162,7 +164,10 @@ void argisense_power_idle_state(void)
 
 int argisense_power_measurement_on(void)
 {
+	struct argisense_runtime_config config;
 	int ret;
+
+	argisense_settings_get_copy(&config);
 
 	ret = set_gpio(&pressure_cs, "pressure CS", false);
 	if (ret < 0) {
@@ -170,7 +175,7 @@ int argisense_power_measurement_on(void)
 	}
 
 	ret = set_gpio(&rs485_termination, "RS485 termination",
-		       argisense_settings_get()->rs485_termination_enabled != 0U);
+		       config.rs485_termination_enabled != 0U);
 	if (ret < 0) {
 		return ret;
 	}

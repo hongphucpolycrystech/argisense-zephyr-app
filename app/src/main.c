@@ -355,7 +355,7 @@ static int argisense_log_firmware_version(void)
 static int argisense_read_methane_sample(
 	struct argisense_measurement_sample *sample)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	struct sensor_value gas_ppm;
 	struct sensor_value gas_percent;
 	struct sensor_value status_flags;
@@ -364,6 +364,8 @@ static int argisense_read_methane_sample(
 	bool percent_ready = false;
 	int fetch_ret;
 	int ret;
+
+	argisense_settings_get_copy(&config);
 
 	fetch_ret = sensor_sample_fetch(methane_sensor);
 	sample->methane_last_error = fetch_ret;
@@ -383,7 +385,7 @@ static int argisense_read_methane_sample(
 	}
 
 	methane_ppm_x100 = sensor_value_to_micro(&gas_ppm) / 10000LL;
-	methane_ppm_x100 += config->methane_zero_offset_ppm_x100;
+	methane_ppm_x100 += config.methane_zero_offset_ppm_x100;
 	if (methane_ppm_x100 < INT32_MIN || methane_ppm_x100 > INT32_MAX) {
 		LOG_ERR("Dynament methane value out of range: %lld ppm_x100",
 			(long long)methane_ppm_x100);
@@ -438,13 +440,15 @@ static int argisense_read_methane_sample(
 static int argisense_read_pressure_sample(
 	struct argisense_measurement_sample *sample)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	struct sensor_value pressure_kpa;
 	struct sensor_value temperature_c;
 	struct sensor_value diagnostic;
 	int64_t pressure_pa;
 	int64_t temperature_centi_c;
 	int ret;
+
+	argisense_settings_get_copy(&config);
 
 	ret = sensor_sample_fetch(pressure_sensor);
 	sample->pressure_last_error = ret;
@@ -463,7 +467,7 @@ static int argisense_read_pressure_sample(
 	}
 
 	pressure_pa = sensor_value_to_micro(&pressure_kpa) / 1000LL;
-	pressure_pa += config->pressure_offset_pa;
+	pressure_pa += config.pressure_offset_pa;
 	if (pressure_pa < INT32_MIN || pressure_pa > INT32_MAX) {
 		LOG_ERR("MS5803 pressure value out of range: %lld Pa",
 			(long long)pressure_pa);
@@ -527,15 +531,18 @@ static void argisense_apply_humidity_cache(
 static int argisense_read_humidity_sample(
 	struct argisense_measurement_sample *sample)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	const int64_t now_ms = k_uptime_get();
-	const int64_t read_period_ms =
-		(int64_t)config->humidity_read_period_seconds * MSEC_PER_SEC;
+	int64_t read_period_ms;
 	struct sensor_value humidity;
 	struct sensor_value temperature;
 	int64_t humidity_rh_x100;
 	int64_t temperature_centi_c;
 	int ret;
+
+	argisense_settings_get_copy(&config);
+	read_period_ms =
+		(int64_t)config.humidity_read_period_seconds * MSEC_PER_SEC;
 
 	if (humidity_cache.initialized &&
 	    (now_ms - humidity_cache.last_read_ms) < read_period_ms) {
@@ -654,16 +661,8 @@ static int argisense_dac_write_outputs(
 
 static int argisense_prepare_outputs(void)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
-	const struct argisense_current_loop_limits limits = {
-		.dac_min_current_ua = config->dac_min_current_ua,
-		.dac_max_current_ua = config->dac_max_current_ua,
-		.dac_fault_current_ua = config->dac_fault_current_ua,
-		.methane_range_low_ppm = config->methane_dac_range_low_ppm,
-		.methane_range_high_ppm = config->methane_dac_range_high_ppm,
-		.pressure_range_low_pa = config->pressure_dac_range_low_pa,
-		.pressure_range_high_pa = config->pressure_dac_range_high_pa,
-	};
+	struct argisense_runtime_config config;
+	struct argisense_current_loop_limits limits;
 	struct argisense_measurement_sample sample = {
 		.methane_valid = false,
 		.pressure_valid = false,
@@ -673,6 +672,17 @@ static int argisense_prepare_outputs(void)
 	int pressure_ret;
 	int humidity_ret;
 	int ret;
+
+	argisense_settings_get_copy(&config);
+	limits = (struct argisense_current_loop_limits){
+		.dac_min_current_ua = config.dac_min_current_ua,
+		.dac_max_current_ua = config.dac_max_current_ua,
+		.dac_fault_current_ua = config.dac_fault_current_ua,
+		.methane_range_low_ppm = config.methane_dac_range_low_ppm,
+		.methane_range_high_ppm = config.methane_dac_range_high_ppm,
+		.pressure_range_low_pa = config.pressure_dac_range_low_pa,
+		.pressure_range_high_pa = config.pressure_dac_range_high_pa,
+	};
 
 	methane_ret = argisense_read_methane_sample(&sample);
 	if (methane_ret < 0) {
@@ -690,7 +700,6 @@ static int argisense_prepare_outputs(void)
 	}
 
 	argisense_current_loop_prepare_with_limits(&sample, &limits, commands);
-	argisense_register_update_sample(&sample, commands);
 
 	for (size_t i = 0; i < ARRAY_SIZE(commands); i++) {
 		LOG_INF("DAC channel %u maps %s value %d to %d uA",
@@ -703,6 +712,8 @@ static int argisense_prepare_outputs(void)
 		return ret;
 	}
 
+	argisense_register_update_sample(&sample, commands);
+
 	if (methane_ret < 0) {
 		return methane_ret;
 	}
@@ -713,10 +724,14 @@ static int argisense_prepare_outputs(void)
 static int argisense_boot_confirm_if_ready(void)
 {
 #if defined(CONFIG_BOOTLOADER_MCUBOOT)
+	static bool image_confirmed_log_done;
 	int ret;
 
 	if (boot_is_img_confirmed()) {
-		LOG_INF("MCUboot image already confirmed");
+		if (!image_confirmed_log_done) {
+			LOG_INF("MCUboot image already confirmed");
+			image_confirmed_log_done = true;
+		}
 		return 0;
 	}
 
@@ -726,7 +741,8 @@ static int argisense_boot_confirm_if_ready(void)
 		return ret;
 	}
 
-	LOG_INF("MCUboot image confirmed after bring-up checks");
+	image_confirmed_log_done = true;
+	LOG_INF("MCUboot image confirmed after successful measurement and output refresh");
 #endif
 
 	return 0;
@@ -734,7 +750,7 @@ static int argisense_boot_confirm_if_ready(void)
 
 int main(void)
 {
-	const struct argisense_runtime_config *config;
+	struct argisense_runtime_config config;
 	int ret;
 
 	LOG_INF("ArgiSense Zephyr 4.4 application started");
@@ -797,16 +813,11 @@ int main(void)
 
 	argisense_power_idle_state();
 
-	ret = argisense_boot_confirm_if_ready();
-	if (ret < 0) {
-		return ret;
-	}
-
-	config = argisense_settings_get();
+	argisense_settings_get_copy(&config);
 	LOG_INF("Power manager ready: period=%us, window=%ums",
-		config->measurement_period_seconds, config->measurement_window_ms);
+		config.measurement_period_seconds, config.measurement_window_ms);
 	LOG_INF("HTU21D humidity read period=%us",
-		config->humidity_read_period_seconds);
+		config.humidity_read_period_seconds);
 	LOG_INF("+3V3_PRE idle policy: %s",
 		IS_ENABLED(CONFIG_ARGISENSE_PRE_RAIL_ALWAYS_ON) ?
 		"kept on for Dynament methane sensor" : "powered off");
@@ -816,16 +827,21 @@ int main(void)
 	LOG_INF("Dual GP8302 output model ready: DAC0=methane, DAC1=pressure");
 
 	while (true) {
-		config = argisense_settings_get();
+		argisense_settings_get_copy(&config);
 		LOG_INF("Powering sensor rails for measurement");
 
 		argisense_power_measurement_lock();
 		ret = argisense_power_measurement_on();
 		if (ret == 0) {
-			k_msleep((int32_t)config->measurement_window_ms);
+			k_msleep((int32_t)config.measurement_window_ms);
 			ret = argisense_prepare_outputs();
 			if (ret < 0) {
 				LOG_ERR("Output refresh failed: %d", ret);
+			} else {
+				ret = argisense_boot_confirm_if_ready();
+				if (ret < 0) {
+					LOG_ERR("MCUboot image confirm failed: %d", ret);
+				}
 			}
 		}
 
@@ -833,6 +849,6 @@ int main(void)
 		argisense_power_measurement_unlock();
 		LOG_INF("External switched rails in idle state; entering low-power idle");
 
-		k_sleep(K_SECONDS(config->measurement_period_seconds));
+		k_sleep(K_SECONDS(config.measurement_period_seconds));
 	}
 }

@@ -168,6 +168,26 @@ config ARGISENSE_RS485_DFU_MAX_CHUNK_BYTES
 	  two data bytes. 96 bytes fits comfortably inside the Zephyr Modbus
 	  RTU buffer and works well on noisy RS485 links.
 
+config ARGISENSE_RS485_DFU_UNLOCK_KEY
+	hex "RS485 DFU service unlock key"
+	depends on ARGISENSE_RS485_DFU
+	default 0xA65D
+	help
+	  16-bit service key that must be written to the DFU unlock register
+	  before image metadata, payload, or control registers accept writes.
+	  Override this in a private production config if RS485 DFU remains
+	  enabled in field firmware.
+
+config ARGISENSE_RS485_DFU_UNLOCK_WINDOW_SECONDS
+	int "RS485 DFU unlock window in seconds"
+	depends on ARGISENSE_RS485_DFU
+	default 1800
+	range 60 7200
+	help
+	  Number of seconds that DFU writes remain enabled after a valid unlock
+	  key. Choose a value long enough for the slowest supported RS485 baud
+	  rate and firmware image size.
+
 endmenu
 
 menu "USB-C device support"

@@ -116,22 +116,12 @@ static int dynament_uart_write(const struct device *uart, const uint8_t *buf,
 	return 0;
 }
 
-static int dynament_uart_read_frame(const struct device *uart, uint8_t *buf,
-				    size_t len, uint32_t timeout_ms)
+static int dynament_uart_read_byte_until(const struct device *uart,
+					 uint8_t *byte, int64_t deadline)
 {
-	const int64_t deadline = k_uptime_get() + timeout_ms;
-	size_t used = 0U;
-
-	while (used < len) {
-		uint8_t byte;
-
-		if (uart_poll_in(uart, &byte) == 0) {
-			if (used == 0U && byte != DYNAMENT_DLE) {
-				continue;
-			}
-
-			buf[used++] = byte;
-			continue;
+	while (true) {
+		if (uart_poll_in(uart, byte) == 0) {
+			return 0;
 		}
 
 		if (k_uptime_get() >= deadline) {
@@ -140,8 +130,117 @@ static int dynament_uart_read_frame(const struct device *uart, uint8_t *buf,
 
 		k_msleep(1);
 	}
+}
+
+static int dynament_uart_read_payload_byte(const struct device *uart,
+					   uint8_t *byte, int64_t deadline)
+{
+	int ret;
+
+	ret = dynament_uart_read_byte_until(uart, byte, deadline);
+	if (ret < 0 || *byte != DYNAMENT_DLE) {
+		return ret;
+	}
+
+	ret = dynament_uart_read_byte_until(uart, byte, deadline);
+	if (ret < 0) {
+		return ret;
+	}
+
+	if (*byte == DYNAMENT_EOF) {
+		return -EBADMSG;
+	}
 
 	return 0;
+}
+
+static int dynament_uart_read_frame(const struct device *uart, uint8_t *buf,
+				    size_t len, uint32_t timeout_ms)
+{
+	const int64_t deadline = k_uptime_get() + timeout_ms;
+	uint8_t byte;
+	uint8_t payload_len;
+	size_t compact_len;
+	int ret;
+
+	if (len < 7U) {
+		return -ENOMEM;
+	}
+
+	while (true) {
+		ret = dynament_uart_read_byte_until(uart, &byte, deadline);
+		if (ret < 0) {
+			return ret;
+		}
+
+		if (byte != DYNAMENT_DLE) {
+			continue;
+		}
+
+		ret = dynament_uart_read_byte_until(uart, &byte, deadline);
+		if (ret < 0) {
+			return ret;
+		}
+
+		if (byte == DYNAMENT_DAT) {
+			break;
+		}
+	}
+
+	ret = dynament_uart_read_byte_until(uart, &payload_len, deadline);
+	if (ret < 0) {
+		return ret;
+	}
+
+	compact_len = 7U + payload_len;
+	if (compact_len > len) {
+		return -EMSGSIZE;
+	}
+
+	buf[0] = DYNAMENT_DLE;
+	buf[1] = DYNAMENT_DAT;
+	buf[2] = payload_len;
+
+	for (size_t i = 0U; i < payload_len; i++) {
+		ret = dynament_uart_read_payload_byte(uart, &buf[3U + i],
+						      deadline);
+		if (ret < 0) {
+			return ret;
+		}
+	}
+
+	ret = dynament_uart_read_byte_until(uart, &byte, deadline);
+	if (ret < 0) {
+		return ret;
+	}
+	if (byte != DYNAMENT_DLE) {
+		return -EBADMSG;
+	}
+
+	ret = dynament_uart_read_byte_until(uart, &byte, deadline);
+	if (ret < 0) {
+		return ret;
+	}
+	if (byte != DYNAMENT_EOF) {
+		return -EBADMSG;
+	}
+
+	buf[3U + payload_len] = DYNAMENT_DLE;
+	buf[4U + payload_len] = DYNAMENT_EOF;
+
+	ret = dynament_uart_read_byte_until(uart, &buf[5U + payload_len],
+					    deadline);
+	if (ret < 0) {
+		return ret;
+	}
+
+	ret = dynament_uart_read_byte_until(uart, &buf[6U + payload_len],
+					    deadline);
+	if (ret < 0) {
+		return ret;
+	}
+
+	return compact_len == len ? 0 : -EMSGSIZE;
 }
 
 static int dynament_parse_live_data_simple(const uint8_t *frame, size_t len,
@@ -188,13 +287,14 @@ static int dynament_platinum_sample_fetch(const struct device *dev,
 	const struct dynament_platinum_config *config = dev->config;
 	uint8_t request[DYNAMENT_LIVE_DATA_REQUEST_LEN];
 	uint8_t frame[DYNAMENT_LIVE_DATA_SIMPLE_FRAME_LEN];
+	const int channel = (int)chan;
 	int ret;
 
-	if (chan != SENSOR_CHAN_ALL &&
-	    chan != ARGISENSE_DYNAMENT_SENSOR_CHAN_GAS_PPM &&
-	    chan != ARGISENSE_DYNAMENT_SENSOR_CHAN_GAS_PERCENT_VOLUME &&
-	    chan != ARGISENSE_DYNAMENT_SENSOR_CHAN_STATUS_FLAGS &&
-	    chan != ARGISENSE_DYNAMENT_SENSOR_CHAN_PROTOCOL_VERSION) {
+	if (channel != (int)SENSOR_CHAN_ALL &&
+	    channel != ARGISENSE_DYNAMENT_SENSOR_CHAN_GAS_PPM &&
+	    channel != ARGISENSE_DYNAMENT_SENSOR_CHAN_GAS_PERCENT_VOLUME &&
+	    channel != ARGISENSE_DYNAMENT_SENSOR_CHAN_STATUS_FLAGS &&
+	    channel != ARGISENSE_DYNAMENT_SENSOR_CHAN_PROTOCOL_VERSION) {
 		return -ENOTSUP;
 	}
 
@@ -244,6 +344,7 @@ static int dynament_platinum_channel_get(const struct device *dev,
 					 struct sensor_value *val)
 {
 	struct dynament_platinum_data *data = dev->data;
+	const int channel = (int)chan;
 	int ret = 0;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
@@ -253,7 +354,7 @@ static int dynament_platinum_channel_get(const struct device *dev,
 		goto out;
 	}
 
-	switch (chan) {
+	switch (channel) {
 	case ARGISENSE_DYNAMENT_SENSOR_CHAN_GAS_PPM:
 		ret = sensor_value_from_micro(
 			val, (int64_t)data->gas_ppm_x100 * 10000LL);

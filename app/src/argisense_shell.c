@@ -795,19 +795,21 @@ static int cmd_argisense_rs485(const struct shell *shell, size_t argc,
 static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 				  char **argv)
 {
-	const struct argisense_runtime_config *config = argisense_settings_get();
+	struct argisense_runtime_config config;
 	const struct argisense_shell_setting *setting;
 	struct argisense_runtime_config updated;
 	int64_t value;
 	int ret;
 
+	argisense_settings_get_copy(&config);
+
 	if (argc == 1U || (argc == 2U && strcmp(argv[1], "list") == 0)) {
-		shell_print(shell, "schema=%u size=%u", config->schema_version,
-			    config->struct_size);
+		shell_print(shell, "schema=%u size=%u", config.schema_version,
+			    config.struct_size);
 		shell_print(shell, "setting                          value        unit     alias            range");
 		shell_print(shell, "-------------------------------------------------------------------------------");
 		for (size_t i = 0U; i < ARRAY_SIZE(shell_settings); i++) {
-			print_shell_setting(shell, &shell_settings[i], config);
+			print_shell_setting(shell, &shell_settings[i], &config);
 		}
 		shell_print(shell, "");
 		shell_print(shell,
@@ -844,7 +846,7 @@ static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 			return -ENOENT;
 		}
 
-		print_shell_setting(shell, setting, config);
+		print_shell_setting(shell, setting, &config);
 		return 0;
 	}
 
@@ -868,7 +870,7 @@ static int cmd_argisense_settings(const struct shell *shell, size_t argc,
 			return -ERANGE;
 		}
 
-		updated = *config;
+		updated = config;
 		shell_setting_set_value(&updated, setting, value);
 
 		ret = argisense_settings_save(&updated);
