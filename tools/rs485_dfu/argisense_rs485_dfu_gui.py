@@ -142,7 +142,8 @@ PARITY_CODE_OPTIONS = {
     "Even (2)": 2,
 }
 PARITY_LABEL_BY_CODE = {value: key for key, value in PARITY_CODE_OPTIONS.items()}
-MAX_HISTORY_SAMPLES = 180
+MAX_HISTORY_SAMPLES = 1000
+DEFAULT_GRAPH_WINDOW_SAMPLES = 60
 
 
 class ModbusError(RuntimeError):
@@ -541,6 +542,7 @@ class App(tk.Tk):
         self.reboot_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Idle")
         self.poll_interval_var = tk.StringVar(value="2.0")
+        self.graph_window_var = tk.StringVar(value=str(DEFAULT_GRAPH_WINDOW_SAMPLES))
         self.sensor_vars = {
             "methane": tk.StringVar(value="-"),
             "pressure": tk.StringVar(value="-"),
@@ -790,6 +792,14 @@ class App(tk.Tk):
         ttk.Label(toolbar, text="Poll").pack(side=tk.LEFT, padx=(16, 4))
         ttk.Entry(toolbar, textvariable=self.poll_interval_var, width=7).pack(side=tk.LEFT)
         ttk.Label(toolbar, text="s").pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(toolbar, text="Window").pack(side=tk.LEFT, padx=(16, 4))
+        self.graph_window_entry = ttk.Entry(
+            toolbar, textvariable=self.graph_window_var, width=7
+        )
+        self.graph_window_entry.pack(side=tk.LEFT)
+        self.graph_window_entry.bind("<Return>", lambda _event: self._redraw_graph())
+        self.graph_window_entry.bind("<FocusOut>", lambda _event: self._redraw_graph())
+        ttk.Label(toolbar, text="samples").pack(side=tk.LEFT, padx=(4, 0))
         self.action_buttons.extend(
             [self.read_sensors_button, self.start_monitor_button]
         )
@@ -1029,6 +1039,14 @@ class App(tk.Tk):
             return
         if interval <= 0:
             messagebox.showerror("ArgiSense RS485", "Poll interval must be positive.")
+            return
+        try:
+            window = int(self.graph_window_var.get())
+        except ValueError:
+            messagebox.showerror("ArgiSense RS485", "Graph window must be numeric.")
+            return
+        if window <= 1:
+            messagebox.showerror("ArgiSense RS485", "Graph window must be at least 2 samples.")
             return
         self.monitoring = True
         self.status_var.set("Graph polling")
@@ -1739,9 +1757,21 @@ class App(tk.Tk):
             self.detected_tree.selection_set(iid)
             self.detected_tree.focus(iid)
 
+    def _graph_window_samples(self) -> int:
+        try:
+            window = int(self.graph_window_var.get())
+        except ValueError:
+            return DEFAULT_GRAPH_WINDOW_SAMPLES
+        return max(2, min(window, MAX_HISTORY_SAMPLES))
+
+    def _visible_graph_history(self) -> list[dict[str, float | int | bool | None]]:
+        window = self._graph_window_samples()
+        return self.sample_history[-window:]
+
     def _redraw_graph(self) -> None:
         canvas = self.graph_canvas
         canvas.delete("all")
+        visible_history = self._visible_graph_history()
         width = max(canvas.winfo_width(), 200)
         height = max(canvas.winfo_height(), 160)
         left = 52
@@ -1766,11 +1796,11 @@ class App(tk.Tk):
             right,
             10,
             anchor=tk.E,
-            text=f"{len(self.sample_history)} samples",
+            text=f"last {len(visible_history)}/{len(self.sample_history)} samples",
             fill="#64748b",
         )
 
-        if len(self.sample_history) < 2:
+        if len(visible_history) < 2:
             canvas.create_text(
                 (left + right) // 2,
                 (top + bottom) // 2,
@@ -1793,11 +1823,11 @@ class App(tk.Tk):
             fill="white",
             outline="#e2e8f0",
         )
-        x_span = max(len(self.sample_history) - 1, 1)
+        x_span = max(len(visible_history) - 1, 1)
         for s_index, (key, label, color) in enumerate(series):
             values = [
                 float(sample[key])
-                for sample in self.sample_history
+                for sample in visible_history
                 if sample.get(key) is not None
             ]
             if len(values) < 2:
@@ -1808,7 +1838,7 @@ class App(tk.Tk):
                 min_v -= 1.0
                 max_v += 1.0
             points: list[float] = []
-            for index, sample in enumerate(self.sample_history):
+            for index, sample in enumerate(visible_history):
                 value = sample.get(key)
                 if value is None:
                     continue

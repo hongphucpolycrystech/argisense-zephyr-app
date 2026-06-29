@@ -421,7 +421,9 @@ commands finish successfully.
 The sensor tab keeps the latest measurements in a compact three-column layout
 so the trend graph has more vertical space. The graph displays methane ppm,
 pressure Pa, and humidity %RH with an auto-scaled grid, sample count, and a
-readable legend. The status/log panel is separated from the main tabs with a
+readable legend. Its `Window` field limits the visible plot to the most recent
+samples so long monitoring runs do not compress the full history into an
+unreadable line. The status/log panel is separated from the main tabs with a
 vertical splitter so service logs remain visible during firmware update,
 auto-detect, and live monitoring.
 

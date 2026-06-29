@@ -269,7 +269,8 @@ Modbus baudrate, data bits, parity, stop bits, and unit ID. Then use:
   MCUboot image after field validation.
 - `Sensors` to read methane, pressure, humidity, temperature, DAC current,
   status, sample sequence, and uptime. This tab can poll continuously and draw
-  an auto-scaled trend graph.
+  an auto-scaled trend graph. The graph `Window` field limits the visible plot
+  to the most recent samples so long runs stay readable.
 - `Device Config` to read and write unit ID, baud preset, data bits, parity,
   stop bits, RS485 termination, measurement timing, and DAC current limits.
 

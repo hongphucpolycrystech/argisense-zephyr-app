@@ -68,10 +68,12 @@ The default firmware transport setting is 8 data bits, no parity, and 2 stop
 bits, matching Modbus RTU no-parity framing. If the device is configured for
 8N1, choose `8` data bits, `None (N)`, and `1` stop bit in the GUI.
 
-Use the `Sensors` tab for live polling and graphing. Use the `Device Config`
-tab to read the current device configuration before applying changes. Transport
-changes such as unit ID, baud, data bits, parity, and stop bits are saved
-immediately but take effect after device reboot.
+Use the `Sensors` tab for live polling and graphing. `Window` controls how many
+of the most recent samples are drawn on the trend graph, so long monitoring
+runs do not compress older and newer samples into an unreadable line. Use the
+`Device Config` tab to read the current device configuration before applying
+changes. Transport changes such as unit ID, baud, data bits, parity, and stop
+bits are saved immediately but take effect after device reboot.
 
 `Auto Detect` does not stop at the first valid ArgiSense response. If multiple
 ArgiSense devices are on the same RS485 bus, use `Scan IDs` to choose how wide
