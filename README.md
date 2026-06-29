@@ -262,7 +262,9 @@ baudrate, data bits, parity, stop bits, and unit ID. Then use:
 
 - `Firmware Update` to select `zephyr.signed.bin`, upload it, verify it, and
   optionally reboot into the MCUboot test image. The tab writes the configured
-  DFU unlock key before touching image metadata or payload registers.
+  DFU unlock key before touching image metadata or payload registers. It also
+  provides `Confirm Image` for manually confirming the currently running
+  MCUboot image after field validation.
 - `Sensors` to read methane, pressure, humidity, temperature, DAC current,
   status, sample sequence, and uptime. This tab can poll continuously and draw
   an auto-scaled trend graph.
@@ -528,6 +530,7 @@ argisense dac raw methane 0x28f
 argisense dac raw pressure 0xccc
 argisense eeprom
 argisense eeprom 0 32
+argisense ambient
 argisense sensors
 argisense rs485
 argisense rs485 30 3
@@ -549,8 +552,9 @@ argisense settings reset
   EEPROM.
 - `argisense eeprom <offset> <length>` reads up to 64 bytes from the external
   EEPROM for bring-up diagnostics.
+- `argisense ambient` performs a one-shot HTU21D ambient temperature read.
 - `argisense sensors` performs a one-shot read of Dynament methane, MS5803
-  pressure/temperature, and HTU21D humidity/temperature.
+  pressure/temperature, and HTU21D humidity/ambient temperature.
 - `argisense rs485` dumps live/control registers `0..36`, configuration
   registers `40..59`, diagnostics `70..82`, and the RS485 DFU window
   `1000..1035`.

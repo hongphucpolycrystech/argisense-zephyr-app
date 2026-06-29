@@ -694,8 +694,51 @@ static void print_humidity_sample(const struct shell *shell)
 
 	if (sensor_channel_get(humidity_sensor, SENSOR_CHAN_AMBIENT_TEMP,
 			       &temperature) == 0) {
-		print_sensor_value(shell, "humidity temp", "C", &temperature);
+		print_sensor_value(shell, "ambient temp", "C", &temperature);
 	}
+}
+
+static int cmd_argisense_ambient(const struct shell *shell, size_t argc,
+				 char **argv)
+{
+	struct sensor_value temperature;
+	int ret;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(shell, "Powering measurement rails for HTU21D ambient read...");
+	argisense_power_measurement_lock();
+	ret = argisense_power_measurement_on();
+	if (ret < 0) {
+		argisense_power_measurement_unlock();
+		shell_error(shell, "failed to power measurement rails: %d", ret);
+		return ret;
+	}
+
+	ret = sensor_sample_fetch_chan(humidity_sensor, SENSOR_CHAN_AMBIENT_TEMP);
+	if (ret < 0) {
+		argisense_power_idle_state();
+		argisense_power_measurement_unlock();
+		shell_error(shell, "HTU21D ambient temperature fetch failed: %d",
+			    ret);
+		return ret;
+	}
+
+	ret = sensor_channel_get(humidity_sensor, SENSOR_CHAN_AMBIENT_TEMP,
+				 &temperature);
+	argisense_power_idle_state();
+	argisense_power_measurement_unlock();
+	if (ret < 0) {
+		shell_error(shell, "HTU21D ambient temperature read failed: %d",
+			    ret);
+		return ret;
+	}
+
+	print_sensor_value(shell, "ambient temp", "C", &temperature);
+	shell_print(shell, "Measurement rails returned to idle state.");
+
+	return 0;
 }
 
 static int cmd_argisense_sensors(const struct shell *shell, size_t argc,
@@ -971,6 +1014,8 @@ static int cmd_argisense_eeprom(const struct shell *shell, size_t argc,
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	argisense_cmds,
+	SHELL_CMD(ambient, NULL, "Read HTU21D ambient temperature.",
+		  cmd_argisense_ambient),
 	SHELL_CMD(drivers, NULL, "Show ArgiSense driver/device readiness.",
 		  cmd_argisense_drivers),
 	SHELL_CMD(dac, NULL,
@@ -978,7 +1023,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		  cmd_argisense_dac),
 	SHELL_CMD(eeprom, NULL, "Read AT24C512C EEPROM: eeprom [offset] [length].",
 		  cmd_argisense_eeprom),
-	SHELL_CMD(sensors, NULL, "Fetch and print methane, pressure, and humidity.",
+	SHELL_CMD(sensors, NULL,
+		  "Fetch and print methane, pressure, humidity, and ambient temperature.",
 		  cmd_argisense_sensors),
 	SHELL_CMD(rs485, NULL, "Dump RS485 holding registers: rs485 [start] [count].",
 		  cmd_argisense_rs485),

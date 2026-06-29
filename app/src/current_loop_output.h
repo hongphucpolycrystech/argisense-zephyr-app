@@ -22,6 +22,7 @@ struct argisense_measurement_sample {
 	int32_t pressure_last_error;
 	int32_t humidity_last_error;
 	int32_t pressure_temperature_centi_c;
+	int32_t ambient_temperature_centi_c;
 	int32_t humidity_rh_x100;
 	int32_t humidity_temperature_centi_c;
 	uint32_t pressure_d1_raw;

@@ -82,17 +82,22 @@ polled more often than needed. Each measurement sample carries:
 
 ```c
 int32_t humidity_rh_x100;
+int32_t ambient_temperature_centi_c;
 int32_t humidity_temperature_centi_c;
 int32_t humidity_last_error;
 bool humidity_valid;
 ```
+
+`ambient_temperature_centi_c` is the primary firmware field for HTU21D
+temperature. `humidity_temperature_centi_c` is kept as a compatibility alias for
+older code and tools.
 
 Humidity is auxiliary data. It does not drive either GP8302 4-20 mA output by
 default. DAC0 remains mapped to methane and DAC1 remains mapped to pressure.
 
 ## RS485 Registers
 
-The register map version is `4`.
+The register map version is `8`.
 
 Register `2` exposes HTU21D state through these status bits:
 
@@ -113,6 +118,7 @@ Useful shell checks:
 
 ```text
 argisense drivers
+argisense ambient
 argisense sensors
 argisense rs485 80 3
 ```

@@ -89,7 +89,7 @@ enum argisense_holding_register {
 	ARGISENSE_REG_PRESSURE_D2_RAW_LO = 78,
 	ARGISENSE_REG_PRESSURE_PROM_CRC = 79,
 	ARGISENSE_REG_HUMIDITY_RH_X100 = 80,
-	ARGISENSE_REG_HUMIDITY_TEMP_CENTI_C = 81,
+	ARGISENSE_REG_AMBIENT_TEMP_CENTI_C = 81,
 	ARGISENSE_REG_HUMIDITY_LAST_ERROR = 82,
 };
 
@@ -124,6 +124,7 @@ struct argisense_register_snapshot {
 	int32_t humidity_last_error;
 	int32_t pressure_temperature_centi_c;
 	int32_t humidity_rh_x100;
+	int32_t ambient_temperature_centi_c;
 	int32_t humidity_temperature_centi_c;
 	uint32_t pressure_d1_raw;
 	uint32_t pressure_d2_raw;
@@ -561,8 +562,8 @@ int argisense_register_read_holding(uint16_t addr, uint16_t *reg)
 	case ARGISENSE_REG_HUMIDITY_RH_X100:
 		*reg = (uint16_t)snapshot.humidity_rh_x100;
 		return 0;
-	case ARGISENSE_REG_HUMIDITY_TEMP_CENTI_C:
-		*reg = (uint16_t)snapshot.humidity_temperature_centi_c;
+	case ARGISENSE_REG_AMBIENT_TEMP_CENTI_C:
+		*reg = (uint16_t)snapshot.ambient_temperature_centi_c;
 		return 0;
 	case ARGISENSE_REG_HUMIDITY_LAST_ERROR:
 		*reg = (uint16_t)snapshot.humidity_last_error;
@@ -1020,8 +1021,8 @@ const char *argisense_register_holding_name(uint16_t addr)
 		return "pressure_prom_crc";
 	case ARGISENSE_REG_HUMIDITY_RH_X100:
 		return "humidity_rh_x100";
-	case ARGISENSE_REG_HUMIDITY_TEMP_CENTI_C:
-		return "humidity_temp_centi_c";
+	case ARGISENSE_REG_AMBIENT_TEMP_CENTI_C:
+		return "ambient_temp_centi_c";
 	case ARGISENSE_REG_HUMIDITY_LAST_ERROR:
 		return "humidity_last_error";
 	default:
@@ -1047,6 +1048,8 @@ void argisense_register_update_sample(
 	sample_snapshot.pressure_temperature_centi_c =
 		sample->pressure_temperature_centi_c;
 	sample_snapshot.humidity_rh_x100 = sample->humidity_rh_x100;
+	sample_snapshot.ambient_temperature_centi_c =
+		sample->ambient_temperature_centi_c;
 	sample_snapshot.humidity_temperature_centi_c =
 		sample->humidity_temperature_centi_c;
 	sample_snapshot.pressure_d1_raw = sample->pressure_d1_raw;

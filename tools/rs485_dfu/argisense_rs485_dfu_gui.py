@@ -68,6 +68,8 @@ REG_DAC1_CURRENT_UA = 15
 REG_SAMPLE_SEQUENCE_HI = 16
 REG_SAMPLE_UPTIME_SECONDS_HI = 18
 REG_REBOOT_REQUIRED = 27
+REG_LAST_COMMAND = 28
+REG_LAST_COMMAND_RESULT = 29
 REG_DAC_MIN_CURRENT_UA = 30
 REG_DAC_MAX_CURRENT_UA = 31
 REG_DAC_FAULT_CURRENT_UA = 32
@@ -77,10 +79,11 @@ REG_RS485_STOP_BITS = 35
 REG_RS485_DATA_BITS = 36
 REG_PRESSURE_TEMP_CENTI_C = 74
 REG_HUMIDITY_RH_X100 = 80
-REG_HUMIDITY_TEMP_CENTI_C = 81
+REG_AMBIENT_TEMP_CENTI_C = 81
 REG_HUMIDITY_LAST_ERROR = 82
 
 COMMAND_REBOOT = 0xA551
+COMMAND_CONFIRM_IMAGE = 0xA553
 
 DFU_CMD_NONE = 0x0000
 DFU_CMD_BEGIN = 0xD001
@@ -540,7 +543,7 @@ class App(tk.Tk):
             "methane": tk.StringVar(value="-"),
             "pressure": tk.StringVar(value="-"),
             "humidity": tk.StringVar(value="-"),
-            "humidity_temp": tk.StringVar(value="-"),
+            "ambient_temp": tk.StringVar(value="-"),
             "pressure_temp": tk.StringVar(value="-"),
             "dac0": tk.StringVar(value="-"),
             "dac1": tk.StringVar(value="-"),
@@ -707,7 +710,13 @@ class App(tk.Tk):
         self.probe_button.pack(side=tk.LEFT)
         self.upload_button = ttk.Button(actions, text="Upload Firmware", command=self.upload)
         self.upload_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.action_buttons.extend([self.probe_button, self.upload_button])
+        self.confirm_image_button = ttk.Button(
+            actions, text="Confirm Image", command=self.confirm_image
+        )
+        self.confirm_image_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.action_buttons.extend(
+            [self.probe_button, self.upload_button, self.confirm_image_button]
+        )
 
         self.progress_bar = ttk.Progressbar(tab, mode="determinate", maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=(10, 0))
@@ -740,7 +749,7 @@ class App(tk.Tk):
             ("Methane", "methane"),
             ("Pressure", "pressure"),
             ("Humidity", "humidity"),
-            ("Humidity temp", "humidity_temp"),
+            ("Ambient temp", "ambient_temp"),
             ("Pressure temp", "pressure_temp"),
             ("DAC0 methane", "dac0"),
             ("DAC1 pressure", "dac1"),
@@ -933,6 +942,15 @@ class App(tk.Tk):
 
     def upload(self) -> None:
         self._start_worker(self._upload_worker, require_chunk=True)
+
+    def confirm_image(self) -> None:
+        if not messagebox.askyesno(
+            "ArgiSense RS485",
+            "Confirm the currently running MCUboot image? This disables "
+            "automatic rollback for this image.",
+        ):
+            return
+        self._start_worker(self._confirm_image_worker)
 
     def read_sensors_once(self) -> None:
         self._start_worker(self._read_sensors_worker)
@@ -1195,7 +1213,7 @@ class App(tk.Tk):
         methane_ppm_x100 = signed32_from_words(live[10], live[11])
         pressure_pa = signed32_from_words(live[12], live[13])
         humidity_rh_x100 = signed16(diagnostics[10])
-        humidity_temp_centi_c = signed16(diagnostics[11])
+        ambient_temp_centi_c = signed16(diagnostics[11])
         pressure_temp_centi_c = signed16(diagnostics[4])
         return {
             "timestamp": time.time(),
@@ -1210,7 +1228,7 @@ class App(tk.Tk):
             "methane_ppm": methane_ppm_x100 / 100.0,
             "pressure_pa": pressure_pa,
             "humidity_rh": humidity_rh_x100 / 100.0,
-            "humidity_temp_c": humidity_temp_centi_c / 100.0,
+            "ambient_temp_c": ambient_temp_centi_c / 100.0,
             "pressure_temp_c": pressure_temp_centi_c / 100.0,
             "dac0_ua": live[REG_DAC0_CURRENT_UA],
             "dac1_ua": live[REG_DAC1_CURRENT_UA],
@@ -1363,6 +1381,28 @@ class App(tk.Tk):
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
             self.messages.put(("error", str(exc)))
 
+    def _confirm_image_worker(self, *, reschedule_monitor: bool = False) -> None:
+        ARG_UNUSED = reschedule_monitor
+        del ARG_UNUSED
+        try:
+            client = self._make_client()
+            try:
+                client.write_single(REG_COMMAND, COMMAND_CONFIRM_IMAGE)
+                last_command, result = client.read_holding(REG_LAST_COMMAND, 2)
+                result = signed16(result)
+                if last_command != COMMAND_CONFIRM_IMAGE:
+                    self.log(
+                        "Warning: command echo changed: "
+                        f"0x{last_command:04X}"
+                    )
+                if result < 0:
+                    raise RuntimeError(f"confirm image failed: {result}")
+                self.messages.put(("done", "MCUboot image confirmed"))
+            finally:
+                client.close()
+        except Exception as exc:  # noqa: BLE001 - displayed in GUI.
+            self.messages.put(("error", str(exc)))
+
     def _upload_worker(self, *, reschedule_monitor: bool = False) -> None:
         ARG_UNUSED = reschedule_monitor
         del ARG_UNUSED
@@ -1436,8 +1476,8 @@ class App(tk.Tk):
         self.sensor_vars["humidity"].set(
             format_scaled(sample.get("humidity_rh"), 1.0, "%RH", 2)
         )
-        self.sensor_vars["humidity_temp"].set(
-            format_scaled(sample.get("humidity_temp_c"), 1.0, "degC", 2)
+        self.sensor_vars["ambient_temp"].set(
+            format_scaled(sample.get("ambient_temp_c"), 1.0, "degC", 2)
         )
         self.sensor_vars["pressure_temp"].set(
             format_scaled(sample.get("pressure_temp_c"), 1.0, "degC", 2)

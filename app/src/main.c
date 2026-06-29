@@ -523,6 +523,7 @@ static void argisense_apply_humidity_cache(
 	struct argisense_measurement_sample *sample)
 {
 	sample->humidity_rh_x100 = humidity_cache.humidity_rh_x100;
+	sample->ambient_temperature_centi_c = humidity_cache.temperature_centi_c;
 	sample->humidity_temperature_centi_c = humidity_cache.temperature_centi_c;
 	sample->humidity_last_error = humidity_cache.last_error;
 	sample->humidity_valid = humidity_cache.valid;
@@ -600,11 +601,11 @@ static int argisense_read_humidity_sample(
 	humidity_cache.valid = true;
 	argisense_apply_humidity_cache(sample);
 
-	LOG_INF("HTU21D humidity=%d.%02d%%RH temperature=%d.%02d C",
+	LOG_INF("HTU21D humidity=%d.%02d%%RH ambient_temperature=%d.%02d C",
 		sample->humidity_rh_x100 / 100,
 		abs(sample->humidity_rh_x100 % 100),
-		sample->humidity_temperature_centi_c / 100,
-		abs(sample->humidity_temperature_centi_c % 100));
+		sample->ambient_temperature_centi_c / 100,
+		abs(sample->ambient_temperature_centi_c % 100));
 
 	return 0;
 }
@@ -816,7 +817,7 @@ int main(void)
 	argisense_settings_get_copy(&config);
 	LOG_INF("Power manager ready: period=%us, window=%ums",
 		config.measurement_period_seconds, config.measurement_window_ms);
-	LOG_INF("HTU21D humidity read period=%us",
+	LOG_INF("HTU21D humidity/ambient temperature read period=%us",
 		config.humidity_read_period_seconds);
 	LOG_INF("+3V3_PRE idle policy: %s",
 		IS_ENABLED(CONFIG_ARGISENSE_PRE_RAIL_ALWAYS_ON) ?

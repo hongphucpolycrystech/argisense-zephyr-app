@@ -7,7 +7,9 @@ The tool provides three operator views:
 
 - `Firmware Update`: upload an MCUboot signed binary to the secondary image
   slot after writing the DFU service unlock key, verify SHA-256 on the device,
-  then optionally mark the image for an MCUboot test swap and reboot.
+  then optionally mark the image for an MCUboot test swap and reboot. The same
+  tab also has `Confirm Image` to manually confirm the currently running
+  MCUboot image after field validation.
 - `Sensors`: read methane, pressure, humidity, temperature, DAC current, status,
   sequence, and uptime registers. The tab can poll continuously and draw an
   auto-scaled trend graph.
@@ -49,6 +51,10 @@ build\argisense-zephyr-app\zephyr\zephyr.signed.bin
 Use the default 96-byte chunk size unless the firmware reports a lower device
 maximum during `Probe`. The default unlock key is `0xA65D`; enter the key that
 matches `CONFIG_ARGISENSE_RS485_DFU_UNLOCK_KEY` for the target firmware.
+
+Use `Confirm Image` only after the running firmware has passed the required
+sensor, output, and communication checks. Confirming an image disables MCUboot's
+automatic rollback for that image.
 
 The default firmware transport setting is 8 data bits, no parity, and 2 stop
 bits, matching Modbus RTU no-parity framing. If the device is configured for
@@ -95,7 +101,7 @@ The monitor and configuration tabs use these holding registers:
 36      rs485_data_bits
 74      pressure_temperature_centi_c
 80      humidity_rh_x100
-81      humidity_temperature_centi_c
+81      ambient_temperature_centi_c
 82      humidity_last_error
 ```
 

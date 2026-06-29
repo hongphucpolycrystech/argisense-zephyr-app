@@ -404,7 +404,9 @@ registers. The GUI first writes the configured DFU service unlock key, then the
 application writes the image to MCUboot `image-1`, verifies CRC32 and SHA-256,
 and can mark the verified image for a test swap and reboot. MCUboot performs
 the swap on the next boot, and the application confirms the image only after a
-successful measurement and DAC output refresh.
+successful measurement and DAC output refresh. The service GUI also exposes a
+manual `Confirm Image` action for cases where the operator wants to confirm the
+currently running image after field validation.
 
 ## USB-C Firmware Update and Service Console
 
@@ -467,6 +469,7 @@ struct argisense_measurement_sample {
 	int32_t humidity_last_error;
 	int32_t pressure_temperature_centi_c;
 	int32_t humidity_rh_x100;
+	int32_t ambient_temperature_centi_c;
 	int32_t humidity_temperature_centi_c;
 	uint32_t pressure_d1_raw;
 	uint32_t pressure_d2_raw;
@@ -552,7 +555,7 @@ The stored configuration currently includes:
 - Measurement period.
 - Measurement window.
 - Methane warm-up and polling periods.
-- HTU21D humidity read period.
+- HTU21D humidity and ambient temperature read period.
 - DAC min, max, and fault current.
 - RS485 termination state.
 
