@@ -395,10 +395,18 @@ complete value when the matching low word is written.
 
 RS485 can also be used as the sealed-product service and firmware update path.
 The PC GUI in `tools/rs485_dfu/argisense_rs485_dfu_gui.py` has tabs for firmware
-update, live sensor monitoring/graphing, and device configuration. It can
-auto-detect an ArgiSense node by scanning COM ports, supported baud presets,
-8-bit Modbus RTU framing variants, parity, stop bits, and Unit IDs until
-register `0` returns device ID `0xA651`. The firmware update tab uploads
+update, live sensor monitoring/graphing, and device configuration. Its
+`Auto Detect` flow scans the selected adapter or all available COM ports,
+supported baud presets, 8-bit Modbus RTU framing variants, parity, stop bits,
+and the Unit IDs entered in `Scan IDs`. Each response with register `0` equal
+to the ArgiSense device ID `0xA651` is added to the `Detected devices` table,
+and the scan continues until the requested range is complete. `Stop Scan` can
+end a long scan early while keeping any devices already found. The GUI
+de-duplicates discovery results by COM port, baudrate, and Unit ID so a single
+physical slave is not shown multiple times if it also responds under another
+parity/stop-bit probe.
+
+The firmware update tab uploads
 `build/argisense-zephyr-app/zephyr/zephyr.signed.bin` over Modbus holding
 registers. The GUI first writes the configured DFU service unlock key, then the
 application writes the image to MCUboot `image-1`, verifies CRC32 and SHA-256,
@@ -406,7 +414,16 @@ and can mark the verified image for a test swap and reboot. MCUboot performs
 the swap on the next boot, and the application confirms the image only after a
 successful measurement and DAC output refresh. The service GUI also exposes a
 manual `Confirm Image` action for cases where the operator wants to confirm the
-currently running image after field validation.
+currently running image after field validation. `Probe` and `Confirm Image`
+write visible progress to the log panel and show completion dialogs when the
+commands finish successfully.
+
+The sensor tab keeps the latest measurements in a compact three-column layout
+so the trend graph has more vertical space. The graph displays methane ppm,
+pressure Pa, and humidity %RH with an auto-scaled grid, sample count, and a
+readable legend. The status/log panel is separated from the main tabs with a
+vertical splitter so service logs remain visible during firmware update,
+auto-detect, and live monitoring.
 
 ## USB-C Firmware Update and Service Console
 
@@ -631,8 +648,9 @@ Implemented:
   through the `argisense-usb-update` snippet.
 - Shell diagnostics for driver readiness, one-shot sensor reads, settings, and
   register inspection.
-- Python/Tkinter RS485 service GUI under `tools/rs485_dfu` for auto-detect,
-  firmware update, live sensor graphing, and runtime device configuration.
+- Python/Tkinter RS485 service GUI under `tools/rs485_dfu` for full-range
+  auto-detect with stop-scan, de-duplicated device discovery, firmware update,
+  visible service logs, live sensor graphing, and runtime device configuration.
 - Python/Tkinter USB-C MCUmgr GUI under `tools/usb_mcumgr`.
 - Rollback-friendly MCUboot/sysbuild policy for bring-up and field service, with
   downgrade prevention currently disabled.

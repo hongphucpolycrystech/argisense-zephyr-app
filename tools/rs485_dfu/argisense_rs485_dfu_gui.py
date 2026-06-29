@@ -523,6 +523,8 @@ class App(tk.Tk):
         self.action_buttons: list[ttk.Button] = []
         self.monitoring = False
         self.sample_history: list[dict[str, float | int | bool | None]] = []
+        self.detected_devices: list[dict[str, int | str]] = []
+        self.scan_cancel_event = threading.Event()
 
         self.port_var = tk.StringVar()
         self.baud_var = tk.StringVar(value="115200")
@@ -655,8 +657,57 @@ class App(tk.Tk):
 
         settings.columnconfigure(1, weight=1)
 
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        detected = ttk.LabelFrame(root, text="Detected devices")
+        detected.pack(fill=tk.X, pady=(10, 0))
+        columns = ("port", "unit", "baud", "framing", "map")
+        self.detected_tree = ttk.Treeview(
+            detected,
+            columns=columns,
+            show="headings",
+            height=4,
+            selectmode="browse",
+        )
+        headings = {
+            "port": ("Port", 120),
+            "unit": ("Unit ID", 70),
+            "baud": ("Baud", 90),
+            "framing": ("Framing", 80),
+            "map": ("Map", 60),
+        }
+        for column, (label, width) in headings.items():
+            self.detected_tree.heading(column, text=label)
+            self.detected_tree.column(column, width=width, anchor=tk.CENTER)
+        self.detected_tree.column("port", anchor=tk.W)
+        self.detected_tree.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
+        self.detected_tree.bind("<Double-1>", lambda _event: self.use_selected_detected_device())
+
+        detected_actions = ttk.Frame(detected)
+        detected_actions.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 6), pady=6)
+        self.use_detected_button = ttk.Button(
+            detected_actions,
+            text="Use Selected",
+            command=self.use_selected_detected_device,
+        )
+        self.use_detected_button.pack(anchor=tk.N)
+        self.action_buttons.append(self.use_detected_button)
+        self.stop_scan_button = ttk.Button(
+            detected_actions,
+            text="Stop Scan",
+            command=self.stop_scan,
+            state=tk.DISABLED,
+        )
+        self.stop_scan_button.pack(anchor=tk.N, pady=(8, 0))
+
+        content = ttk.PanedWindow(root, orient=tk.VERTICAL)
+        content.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        notebook_frame = ttk.Frame(content)
+        log_panel = ttk.Frame(content)
+        content.add(notebook_frame, weight=4)
+        content.add(log_panel, weight=1)
+
+        self.notebook = ttk.Notebook(notebook_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         firmware_tab = ttk.Frame(self.notebook, padding=8)
         sensors_tab = ttk.Frame(self.notebook, padding=8)
@@ -669,14 +720,14 @@ class App(tk.Tk):
         self._build_sensors_tab(sensors_tab)
         self._build_config_tab(config_tab)
 
-        status = ttk.Frame(root)
-        status.pack(fill=tk.X, pady=(10, 0))
+        status = ttk.Frame(log_panel)
+        status.pack(fill=tk.X)
         ttk.Label(status, text="Status").pack(side=tk.LEFT)
         ttk.Label(status, textvariable=self.status_var).pack(side=tk.LEFT, padx=(8, 0))
 
-        log_frame = ttk.LabelFrame(root, text="Log")
-        log_frame.pack(fill=tk.BOTH, expand=False, pady=(10, 0))
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=9, wrap=tk.WORD)
+        log_frame = ttk.LabelFrame(log_panel, text="Log")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=7, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         self.log_text.configure(state=tk.DISABLED)
 
@@ -744,7 +795,7 @@ class App(tk.Tk):
         )
 
         values = ttk.LabelFrame(tab, text="Latest values")
-        values.pack(fill=tk.X, pady=(10, 0))
+        values.pack(fill=tk.X, pady=(8, 0))
         rows = [
             ("Methane", "methane"),
             ("Pressure", "pressure"),
@@ -758,22 +809,34 @@ class App(tk.Tk):
             ("Status", "status"),
         ]
         for index, (label, key) in enumerate(rows):
-            row = index // 2
-            col = (index % 2) * 2
+            if key == "status":
+                row = 3
+                col = 0
+                value_columnspan = 5
+            else:
+                row = index // 3
+                col = (index % 3) * 2
+                value_columnspan = 1
             ttk.Label(values, text=label).grid(
-                row=row, column=col, sticky=tk.W, padx=6, pady=4
+                row=row, column=col, sticky=tk.W, padx=(6, 4), pady=2
             )
             ttk.Label(values, textvariable=self.sensor_vars[key]).grid(
-                row=row, column=col + 1, sticky=tk.W, padx=6, pady=4
+                row=row,
+                column=col + 1,
+                columnspan=value_columnspan,
+                sticky=tk.W,
+                padx=(4, 18),
+                pady=2,
             )
         values.columnconfigure(1, weight=1)
         values.columnconfigure(3, weight=1)
+        values.columnconfigure(5, weight=1)
 
         graph_frame = ttk.LabelFrame(tab, text="Trend graph")
-        graph_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        graph_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         self.graph_canvas = tk.Canvas(
             graph_frame,
-            height=280,
+            height=360,
             background="white",
             highlightthickness=1,
             highlightbackground="#b8c0cc",
@@ -929,7 +992,10 @@ class App(tk.Tk):
 
         self.monitoring = False
         self.progress_bar["value"] = 0
+        self._clear_detected_devices_ui()
+        self.scan_cancel_event.clear()
         self.set_busy(True)
+        self.stop_scan_button.configure(state=tk.NORMAL)
         self.status_var.set("Scanning")
         self.worker = threading.Thread(
             target=lambda: self._auto_detect_worker(reschedule_monitor=False),
@@ -985,6 +1051,33 @@ class App(tk.Tk):
         ):
             return
         self._start_worker(self._reboot_worker)
+
+    def use_selected_detected_device(self) -> None:
+        selection = self.detected_tree.selection()
+        if not selection:
+            messagebox.showinfo("ArgiSense RS485", "Select a detected device first.")
+            return
+
+        index = int(selection[0])
+        if index < 0 or index >= len(self.detected_devices):
+            messagebox.showerror("ArgiSense RS485", "Selected device is no longer valid.")
+            return
+
+        connection = self.detected_devices[index]
+        self._update_connection_ui(connection)
+        summary = self._format_connection_summary(connection)
+        self.status_var.set(f"Selected {summary}")
+        self._append_log(f"Selected detected device: {summary}")
+
+    def stop_scan(self) -> None:
+        if not (self.worker and self.worker.is_alive()):
+            self.stop_scan_button.configure(state=tk.DISABLED)
+            return
+
+        self.scan_cancel_event.set()
+        self.stop_scan_button.configure(state=tk.DISABLED)
+        self.status_var.set("Stopping scan")
+        self._append_log("Stop scan requested")
 
     def _monitor_tick(self) -> None:
         if not self.monitoring:
@@ -1117,6 +1210,8 @@ class App(tk.Tk):
             )
             attempts = 0
             last_error: Exception | None = None
+            found_devices: list[dict[str, int | str]] = []
+            found_keys: set[tuple[str, int, int]] = set()
 
             self.log(
                 "Auto detect started: "
@@ -1125,12 +1220,20 @@ class App(tk.Tk):
             )
 
             for port in ports:
+                if self.scan_cancel_event.is_set():
+                    break
                 self.log(f"Scanning {port}")
                 for baud_label in DISCOVERY_BAUDS:
+                    if self.scan_cancel_event.is_set():
+                        break
                     baudrate = int(baud_label)
                     for parity_label in DISCOVERY_PARITY_LABELS:
+                        if self.scan_cancel_event.is_set():
+                            break
                         parity = PARITY_OPTIONS[parity_label]
                         for stop_label in DISCOVERY_STOP_BITS:
+                            if self.scan_cancel_event.is_set():
+                                break
                             stopbits = STOP_BITS_OPTIONS[stop_label]
                             self.log(
                                 f"Trying {port}: {baudrate} baud, "
@@ -1150,6 +1253,8 @@ class App(tk.Tk):
                                 time.sleep(0.02)
 
                                 for unit_id in unit_ids:
+                                    if self.scan_cancel_event.is_set():
+                                        break
                                     client.unit_id = unit_id
                                     try:
                                         regs = client.read_holding(REG_DEVICE_ID, 2)
@@ -1163,28 +1268,26 @@ class App(tk.Tk):
                                                 "stop_bits_label": stop_label,
                                                 "map_version": regs[REG_MAP_VERSION],
                                             }
-                                            config = self._read_config_snapshot(client)
-                                            self.messages.put(("connection", found))
-                                            self.messages.put(("config", config))
-                                            try:
-                                                sample = self._read_sample(client)
-                                                self.messages.put(("sample", sample))
-                                            except Exception as exc:  # noqa: BLE001 - optional after discovery.
-                                                self.log(f"Sensor read after detect skipped: {exc}")
-                                            self.messages.put(
-                                                (
-                                                    "done",
-                                                    "Connected "
-                                                    f"{port} unit={unit_id} "
-                                                    f"{baudrate} {data_label}{parity}{stop_label} "
-                                                    f"map=v{regs[REG_MAP_VERSION]}",
+                                            key = (port, baudrate, unit_id)
+                                            if key not in found_keys:
+                                                found_keys.add(key)
+                                                found_devices.append(found)
+                                                self.messages.put(("detected_device", found))
+                                                self.log(
+                                                    "Found ArgiSense device: "
+                                                    f"{self._format_connection_summary(found)}"
                                                 )
+                                            else:
+                                                self.log(
+                                                    "Duplicate response ignored for "
+                                                    f"{port} unit={unit_id} {baudrate}; "
+                                                    f"also answered as {data_label}{parity}{stop_label}"
+                                                )
+                                        else:
+                                            self.log(
+                                                f"{port} unit={unit_id} responded with "
+                                                f"device_id=0x{regs[REG_DEVICE_ID]:04X}"
                                             )
-                                            return
-                                        self.log(
-                                            f"{port} unit={unit_id} responded with "
-                                            f"device_id=0x{regs[REG_DEVICE_ID]:04X}"
-                                        )
                                     except Exception as exc:  # noqa: BLE001 - line noise/empty IDs are expected.
                                         last_error = exc
                                     finally:
@@ -1200,6 +1303,49 @@ class App(tk.Tk):
                             finally:
                                 if client is not None:
                                     client.close()
+
+            scan_stopped = self.scan_cancel_event.is_set()
+            if found_devices:
+                selected = found_devices[0]
+                self.messages.put(("connection", selected))
+                client = None
+                try:
+                    client = self._make_client_for(
+                        port=str(selected["port"]),
+                        baudrate=int(selected["baudrate"]),
+                        unit_id=int(selected["unit_id"]),
+                        timeout_s=timeout_s,
+                        bytesize=DATA_BITS_OPTIONS[str(selected["data_bits_label"])],
+                        parity=PARITY_OPTIONS[str(selected["parity_label"])],
+                        stopbits=STOP_BITS_OPTIONS[str(selected["stop_bits_label"])],
+                    )
+                    config = self._read_config_snapshot(client)
+                    self.messages.put(("config", config))
+                    try:
+                        sample = self._read_sample(client)
+                        self.messages.put(("sample", sample))
+                    except Exception as exc:  # noqa: BLE001 - optional after discovery.
+                        self.log(f"Sensor read after detect skipped: {exc}")
+                except Exception as exc:  # noqa: BLE001 - connection details are still usable.
+                    self.log(f"Post-scan config read skipped: {exc}")
+                finally:
+                    if client is not None:
+                        client.close()
+
+                self.messages.put(
+                    (
+                        "done",
+                        f"Scan {'stopped' if scan_stopped else 'complete'}: "
+                        f"found {len(found_devices)} device(s). "
+                        f"Connected to first result: {self._format_connection_summary(selected)}. "
+                        "Select another detected row and use Use Selected to switch.",
+                    )
+                )
+                return
+
+            if scan_stopped:
+                self.messages.put(("done", "Scan stopped: no ArgiSense devices found."))
+                return
 
             suffix = f" Last error: {last_error}" if last_error else ""
             raise RuntimeError(f"No ArgiSense device found.{suffix}")
@@ -1275,6 +1421,7 @@ class App(tk.Tk):
         try:
             client = self._make_client()
             try:
+                self.log("Probe started")
                 map_version = client.read_holding(1, 1)[0]
                 max_chunk = client.read_holding(DFU_REG_MAX_CHUNK_BYTES, 1)[0]
                 status, error = client.read_holding(DFU_REG_STATUS, 2)
@@ -1299,6 +1446,13 @@ class App(tk.Tk):
                     parity, stop_bits = client.read_holding(REG_RS485_PARITY, 2)
                     self.log(f"RS485 settings: parity={parity} stop_bits={stop_bits}")
                 self.messages.put(("done", "Probe complete"))
+                self.messages.put(
+                    (
+                        "info",
+                        "Probe complete. See the Log panel for register map, "
+                        "DFU status, unlock window, and RS485 settings.",
+                    )
+                )
             finally:
                 client.close()
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
@@ -1387,6 +1541,7 @@ class App(tk.Tk):
         try:
             client = self._make_client()
             try:
+                self.log("Confirm image command started")
                 client.write_single(REG_COMMAND, COMMAND_CONFIRM_IMAGE)
                 last_command, result = client.read_holding(REG_LAST_COMMAND, 2)
                 result = signed16(result)
@@ -1397,7 +1552,9 @@ class App(tk.Tk):
                     )
                 if result < 0:
                     raise RuntimeError(f"confirm image failed: {result}")
+                self.log("MCUboot image confirm command accepted by device")
                 self.messages.put(("done", "MCUboot image confirmed"))
+                self.messages.put(("info", "MCUboot image confirmed."))
             finally:
                 client.close()
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
@@ -1538,6 +1695,50 @@ class App(tk.Tk):
         self.parity_var.set(str(connection["parity_label"]))
         self.stop_bits_var.set(str(connection["stop_bits_label"]))
 
+    def _format_connection_summary(self, connection: dict[str, int | str]) -> str:
+        parity = PARITY_OPTIONS[str(connection["parity_label"])]
+        framing = (
+            f"{connection['data_bits_label']}"
+            f"{parity}"
+            f"{connection['stop_bits_label']}"
+        )
+        return (
+            f"{connection['port']} unit={connection['unit_id']} "
+            f"{connection['baudrate']} {framing} "
+            f"map=v{connection['map_version']}"
+        )
+
+    def _clear_detected_devices_ui(self) -> None:
+        self.detected_devices.clear()
+        for item in self.detected_tree.get_children():
+            self.detected_tree.delete(item)
+
+    def _add_detected_device_ui(self, connection: dict[str, int | str]) -> None:
+        index = len(self.detected_devices)
+        self.detected_devices.append(dict(connection))
+        parity = PARITY_OPTIONS[str(connection["parity_label"])]
+        framing = (
+            f"{connection['data_bits_label']}"
+            f"{parity}"
+            f"{connection['stop_bits_label']}"
+        )
+        iid = str(index)
+        self.detected_tree.insert(
+            "",
+            tk.END,
+            iid=iid,
+            values=(
+                str(connection["port"]),
+                str(connection["unit_id"]),
+                str(connection["baudrate"]),
+                framing,
+                f"v{connection['map_version']}",
+            ),
+        )
+        if index == 0:
+            self.detected_tree.selection_set(iid)
+            self.detected_tree.focus(iid)
+
     def _redraw_graph(self) -> None:
         canvas = self.graph_canvas
         canvas.delete("all")
@@ -1545,15 +1746,28 @@ class App(tk.Tk):
         height = max(canvas.winfo_height(), 160)
         left = 52
         right = width - 16
-        top = 24
-        bottom = height - 36
+        top = 30
+        bottom = height - 32
         canvas.create_rectangle(left, top, right, bottom, outline="#cbd5e1")
+        for grid_index in range(1, 4):
+            y = top + ((bottom - top) * grid_index / 4)
+            canvas.create_line(left, y, right, y, fill="#e2e8f0")
+        for grid_index in range(1, 5):
+            x = left + ((right - left) * grid_index / 5)
+            canvas.create_line(x, top, x, bottom, fill="#f1f5f9")
         canvas.create_text(
             left,
             10,
             anchor=tk.W,
             text="Auto-scaled trend: methane ppm, pressure Pa, humidity %RH",
             fill="#334155",
+        )
+        canvas.create_text(
+            right,
+            10,
+            anchor=tk.E,
+            text=f"{len(self.sample_history)} samples",
+            fill="#64748b",
         )
 
         if len(self.sample_history) < 2:
@@ -1570,6 +1784,15 @@ class App(tk.Tk):
             ("pressure_pa", "Pressure Pa", "#2563eb"),
             ("humidity_rh", "Humidity %RH", "#d97706"),
         ]
+        legend_x = max(left + 120, right - 178)
+        canvas.create_rectangle(
+            legend_x - 8,
+            top + 8,
+            right - 4,
+            top + 74,
+            fill="white",
+            outline="#e2e8f0",
+        )
         x_span = max(len(self.sample_history) - 1, 1)
         for s_index, (key, label, color) in enumerate(series):
             values = [
@@ -1595,9 +1818,9 @@ class App(tk.Tk):
             if len(points) >= 4:
                 canvas.create_line(*points, fill=color, width=2, smooth=True)
             legend_y = top + 18 + s_index * 18
-            canvas.create_line(right - 170, legend_y, right - 145, legend_y, fill=color, width=3)
+            canvas.create_line(legend_x, legend_y, legend_x + 25, legend_y, fill=color, width=3)
             canvas.create_text(
-                right - 140,
+                legend_x + 30,
                 legend_y,
                 anchor=tk.W,
                 text=f"{label} ({min_v:.1f}..{max_v:.1f})",
@@ -1616,6 +1839,8 @@ class App(tk.Tk):
                     self._update_sample_ui(payload)  # type: ignore[arg-type]
                 elif kind == "config":
                     self._update_config_ui(payload)  # type: ignore[arg-type]
+                elif kind == "detected_device":
+                    self._add_detected_device_ui(payload)  # type: ignore[arg-type]
                 elif kind == "progress":
                     done, total = payload  # type: ignore[misc]
                     percent = 0 if total == 0 else int((done * 100) / total)
@@ -1634,10 +1859,14 @@ class App(tk.Tk):
                 elif kind == "done":
                     self.status_var.set(str(payload))
                     self.set_busy(False)
+                    self.stop_scan_button.configure(state=tk.DISABLED)
                     self._append_log(str(payload))
+                elif kind == "info":
+                    messagebox.showinfo("ArgiSense RS485", str(payload))
                 elif kind == "error":
                     self.status_var.set("Error")
                     self.set_busy(False)
+                    self.stop_scan_button.configure(state=tk.DISABLED)
                     self._append_log(f"ERROR: {payload}")
                     messagebox.showerror("ArgiSense RS485", str(payload))
         except queue.Empty:

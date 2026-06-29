@@ -254,11 +254,13 @@ py -3.12 argisense-zephyr-app\tools\rs485_dfu\argisense_rs485_dfu_gui.py
 
 The same GUI is the RS485 service tool for sealed-device work. Use `Auto
 Detect` to scan the selected adapter or all available COM ports, baud presets,
-data bits, parity, stop bits, and Unit IDs until an ArgiSense device responds
-with device ID `0xA651`. The default `Scan IDs` range is `1-10,247`; use
-`1-247` when the full RS485 network must be searched. Manual connection is also
-available by selecting the USB-to-RS485 adapter COM port, the current Modbus
-baudrate, data bits, parity, stop bits, and unit ID. Then use:
+data bits, parity, stop bits, and Unit IDs. Each response with device ID
+`0xA651` is added to the `Detected devices` table, and the scan continues until
+the requested range is complete. The default `Scan IDs` range is `1-10,247`;
+use `1-247` when the full RS485 network must be searched. `Stop Scan` can end a
+long scan early while keeping any devices already found. Manual connection is
+also available by selecting the USB-to-RS485 adapter COM port, the current
+Modbus baudrate, data bits, parity, stop bits, and unit ID. Then use:
 
 - `Firmware Update` to select `zephyr.signed.bin`, upload it, verify it, and
   optionally reboot into the MCUboot test image. The tab writes the configured

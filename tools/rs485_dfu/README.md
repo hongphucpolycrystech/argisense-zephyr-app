@@ -35,9 +35,13 @@ py -3.12 argisense-zephyr-app\tools\rs485_dfu\argisense_rs485_dfu_gui.py
 
 Use `Auto Detect` for normal service work. The tool scans the selected COM port
 or all available COM ports, tries the supported baud presets, parity modes, stop
-bits, and Unit IDs from `Scan IDs`, then connects when register `0` reports the
-ArgiSense device ID `0xA651`. The default `Scan IDs` value is `1-10,247`; enter
-`1-247` when the full RS485 network must be searched.
+bits, and Unit IDs from `Scan IDs`. Each ArgiSense response is added to the
+`Detected devices` table when register `0` reports the device ID `0xA651`.
+The scan continues until the full requested range is complete, then the GUI
+connects to the first detected device. Select another row and use `Use Selected`
+or double-click the row to switch the active connection. Use `Stop Scan` to end
+a long scan early and keep any devices already found. The default `Scan IDs`
+value is `1-10,247`; enter `1-247` when the full RS485 network must be searched.
 
 For manual connection, select the USB-to-RS485 adapter COM port, the current
 Modbus baudrate, data bits, parity, stop bits, and slave address.
@@ -56,6 +60,10 @@ Use `Confirm Image` only after the running firmware has passed the required
 sensor, output, and communication checks. Confirming an image disables MCUboot's
 automatic rollback for that image.
 
+`Probe` writes the register-map version, DFU status, unlock window, and RS485
+transport details to the visible `Log` panel. `Probe` and `Confirm Image` also
+show a completion message box when the command finishes successfully.
+
 The default firmware transport setting is 8 data bits, no parity, and 2 stop
 bits, matching Modbus RTU no-parity framing. If the device is configured for
 8N1, choose `8` data bits, `None (N)`, and `1` stop bit in the GUI.
@@ -65,11 +73,18 @@ tab to read the current device configuration before applying changes. Transport
 changes such as unit ID, baud, data bits, parity, and stop bits are saved
 immediately but take effect after device reboot.
 
-`Auto Detect` stops at the first valid ArgiSense response. If multiple
-ArgiSense devices are on the same RS485 bus, set `Scan IDs` to a narrow range.
-The GUI scans only the selected COM port by default. Enable `All COM ports` only
-when you deliberately want the tool to open every detected serial port and send
-Modbus probe frames; the GUI asks for confirmation before doing this.
+`Auto Detect` does not stop at the first valid ArgiSense response. If multiple
+ArgiSense devices are on the same RS485 bus, use `Scan IDs` to choose how wide
+the network search should be. The GUI scans only the selected COM port by
+default. Enable `All COM ports` only when you deliberately want the tool to open
+every detected serial port and send Modbus probe frames; the GUI asks for
+confirmation before doing this.
+
+Some USB-to-RS485 adapters and UART drivers still deliver bytes when parity or
+stop-bit settings do not exactly match, especially for short Modbus probe
+frames. To avoid showing one physical device multiple times, the GUI de-duplicates
+responses by COM port, baudrate, and Unit ID. If the same device also answers
+with another framing combination, the duplicate is logged and ignored.
 
 ## Service Registers
 
