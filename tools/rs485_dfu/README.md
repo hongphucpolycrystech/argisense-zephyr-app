@@ -10,9 +10,11 @@ The tool provides three operator views:
   then optionally mark the image for an MCUboot test swap and reboot. The same
   tab also has `Confirm Image` to manually confirm the currently running
   MCUboot image after field validation.
-- `Sensors`: read methane, pressure, humidity, temperature, DAC current, status,
-  sequence, and uptime registers. The tab can poll continuously and draw an
-  auto-scaled trend graph.
+- `Sensors`: read methane + pressure values on the methane-pressure product, or
+  pH + PT1000 temperature values on the pH product, together with DAC current,
+  status, sequence, and uptime registers. Humidity and ambient temperature are
+  shown only for the methane-pressure product because the pH product does not
+  use HTU21D. The tab can poll continuously and draw an auto-scaled trend graph.
 - `Device Config`: read and write common runtime settings including unit ID,
   baud preset, data bits, parity, stop bits, RS485 termination, measurement
   timing, and DAC current limits.
@@ -36,7 +38,13 @@ py -3.12 argisense-zephyr-app\tools\rs485_dfu\argisense_rs485_dfu_gui.py
 Use `Auto Detect` for normal service work. The tool scans the selected COM port
 or all available COM ports, tries the supported baud presets, parity modes, stop
 bits, and Unit IDs from `Scan IDs`. Each ArgiSense response is added to the
-`Detected devices` table when register `0` reports the device ID `0xA651`.
+`Detected devices` table when register `0` reports a supported device ID:
+
+```text
+0xA651  methane-pressure product
+0xA652  pH product
+```
+
 The scan continues until the full requested range is complete, then the GUI
 connects to the first detected device. Select another row and use `Use Selected`
 or double-click the row to switch the active connection. Use `Stop Scan` to end
@@ -90,7 +98,10 @@ with another framing combination, the duplicate is logged and ignored.
 
 ## Service Registers
 
-The monitor and configuration tabs use these holding registers:
+The monitor and configuration tabs use the common service registers below. On
+the pH product, registers `10..11` contain `ph_x1000` and registers `12..13`
+contain sensor temperature in centi-degrees Celsius. On the methane-pressure
+product, those same ranges contain methane `ppm x100` and pressure in pascals.
 
 ```text
 0       device_id
@@ -102,8 +113,8 @@ The monitor and configuration tabs use these holding registers:
 7       measurement_window_ms
 8       baud_preset
 9       rs485_termination_enabled
-10..11  methane_ppm_x100
-12..13  pressure_pa
+10..11  methane_ppm_x100 or ph_x1000
+12..13  pressure_pa or temperature_centi_c
 14      dac0_current_ua
 15      dac1_current_ua
 16..17  sample_sequence
@@ -116,11 +127,19 @@ The monitor and configuration tabs use these holding registers:
 34      rs485_parity
 35      rs485_stop_bits
 36      rs485_data_bits
-74      pressure_temperature_centi_c
-80      humidity_rh_x100
-81      ambient_temperature_centi_c
-82      humidity_last_error
+74      pressure_temperature_centi_c on methane-pressure; reserved on pH
+80      humidity_rh_x100 on methane-pressure; ph_raw_uv_hi on pH
+81      ambient_temperature_centi_c on methane-pressure; ph_raw_uv_lo on pH
+82      humidity_last_error on methane-pressure; vgs_isfet_uv_hi on pH
+104..105  pt1000_uv on pH
+106     ph_operating_status on pH
 ```
+
+On the pH product, PT1000 temperature comes from an ADS124S08 differential read
+of `AIN2 - AIN3` with 250 uA IDAC excitation on AIN2. A practical bring-up
+check is to read register `104..105`: near room temperature, `pt1000_uv` should
+be roughly 270000 uV. A value near zero usually means the PT1000 path, IDAC
+routing, ADC rail, reference, or ADS124S08 control pins need hardware review.
 
 ## DFU Register Window
 

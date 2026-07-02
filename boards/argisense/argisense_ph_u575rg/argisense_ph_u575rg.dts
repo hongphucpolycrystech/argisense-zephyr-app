@@ -21,28 +21,77 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		zephyr,settings-partition = &storage_partition;
 	};
 
 	aliases {
 		led0 = &blue_led;
 		sw0 = &user_button;
 		i2c-0 = &i2c1;
+		i2c-1 = &i2c2;
+		i2c-2 = &i2c3;
+		spi-0 = &spi1;
 		current-loop-dac0 = &dac0_gp8302;
+		current-loop-dac1 = &dac1_gp8302;
+		eeprom0 = &eeprom_at24c512;
 		rs485-uart = &usart2;
-		ph-adc = &adc1;
+		ph-adc = &ph_ads124s08;
+		ph-bias-dac = &ph_ad5675;
+		ph-analog-rail = &ph_analog_rail;
+		pt1000 = &ph_ads124s08;
+		mcu-adc = &adc1;
 		watchdog0 = &iwdg;
 		die-temp0 = &die_temp;
 	};
 
 	zephyr,user {
-		dac-channel-count = <1>;
+		dac-channel-count = <2>;
 		dac0-output-source = "ph";
+		dac1-output-source = "temperature";
 		dac-power-gpios = <&gpioc 6 GPIO_ACTIVE_HIGH>;
 		dac-alarm-gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;
+		dac1-alarm-gpios = <&gpiob 2 GPIO_ACTIVE_HIGH>;
 		pre-power-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
 		analog-power-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		adc-power-gpios = <&gpioc 3 GPIO_ACTIVE_HIGH>;
+		electrode-zero-gpios = <&gpioc 4 GPIO_ACTIVE_HIGH>;
 		rs485-termination-gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
-		io-channels = <&adc1 1>;
+		io-channels = <&adc1 14>;
+
+		/*
+		 * Sensor_Platform_V1 pH_V1_0 schematic metadata.
+		 *
+		 * This board mapping intentionally keeps USB PA11/PA12, SWD
+		 * PA13/PA14, debug USART1 PA9/PA10, and RS485 USART2 PA1/PA2/PA3
+		 * free from pH analog front-end traffic.
+		 */
+		product-variant = "pH_V1_0";
+		ph-adc-part-number = "ADS124S08IPBSR";
+		ph-bias-dac-part-number = "AD5675BCPZ-REEL7";
+		ph-analog-rail-part-number = "LT3582EUD-5";
+		ph-reference-part-number = "REF3025AIDBZR";
+		ph-pt1000-idac-current-microamp = <250>;
+		ph-adc-channel-labels =
+			"AIN0_Vs_ISFET",
+			"AIN1_Vs_REFET",
+			"AIN2_PT1000_P",
+			"AIN3_PT1000_N",
+			"ISFET_BULK_ADC",
+			"ISFET_SUBS_ADC",
+			"REFET_BULK_ADC",
+			"REFET_SUBS_ADC",
+			"ISFET_DRAIN_ADC",
+			"REFET_DRAIN_ADC",
+			"GATE_BUFF_ADC";
+		ph-bias-dac-channel-labels =
+			"VOUT0_ID_SET_ISFET",
+			"VOUT1_VDS_SET_ISFET",
+			"VOUT2_ID_SET_REFET",
+			"VOUT3_VDS_SET_REFET",
+			"VOUT4_BULK_ISFET",
+			"VOUT5_SUBS_ISFET",
+			"VOUT6_BULK_REFET",
+			"VOUT7_SUBS_REFET";
 	};
 
 	leds {
@@ -133,6 +182,11 @@
 	current-speed = <115200>;
 	de-enable;
 	status = "okay";
+
+	rs485_modbus: modbus0 {
+		compatible = "zephyr,modbus-serial";
+		status = "okay";
+	};
 };
 
 &i2c1 {
@@ -149,10 +203,118 @@
 		max-current-microamp = <25000>;
 		status = "okay";
 	};
+
+	eeprom_at24c512: eeprom@50 {
+		compatible = "microchip,24c512", "atmel,at24";
+		reg = <0x50>;
+		size = <DT_SIZE_K(64)>;
+		pagesize = <128>;
+		address-width = <16>;
+		timeout = <5>;
+		status = "okay";
+	};
+};
+
+&i2c2 {
+	pinctrl-0 = <&i2c2_scl_pb10 &i2c2_sda_pb14>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	status = "okay";
+
+	dac1_gp8302: dac@58 {
+		compatible = "argisense,gp8302";
+		reg = <0x58>;
+		#io-channel-cells = <1>;
+		output-source = "temperature";
+		max-current-microamp = <25000>;
+		status = "okay";
+	};
+
+	/*
+	 * The LT3582 is present on the pH analog supply sheet. Keep this node
+	 * disabled until its final I2C address/programming requirement is
+	 * verified. The enable pin is still mapped through analog-power-gpios.
+	 */
+	ph_analog_rail: analog-rail@2c {
+		compatible = "argisense,lt3582";
+		reg = <0x2c>;
+		enable-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		positive-output-millivolt = <5000>;
+		negative-output-abs-millivolt = <5000>;
+		startup-delay-ms = <20>;
+		status = "disabled";
+	};
+};
+
+&i2c3 {
+	pinctrl-0 = <&i2c3_scl_pc0 &i2c3_sda_pc1>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	status = "okay";
+
+	ph_ad5675: ph-bias-dac@c {
+		compatible = "argisense,ad5675-i2c";
+		reg = <0x0c>;
+		#io-channel-cells = <1>;
+		reset-gpios = <&gpioc 2 GPIO_ACTIVE_LOW>;
+		/*
+		 * pH_V1_0 ties AD5675 LDAC* low through R73 0R and exposes TP17,
+		 * so there is no MCU GPIO to map here. If a later PCB revision
+		 * routes LDAC* to the MCU, add ldac-gpios.
+		 */
+		reference-millivolt = <2500>;
+		gain = <1>;
+		resolution-bits = <16>;
+		channel-labels =
+			"VOUT0_ID_SET_ISFET",
+			"VOUT1_VDS_SET_ISFET",
+			"VOUT2_ID_SET_REFET",
+			"VOUT3_VDS_SET_REFET",
+			"VOUT4_BULK_ISFET",
+			"VOUT5_SUBS_ISFET",
+			"VOUT6_BULK_REFET",
+			"VOUT7_SUBS_REFET";
+		status = "okay";
+	};
+};
+
+&spi1 {
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpioa 4 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	ph_ads124s08: ph-adc@0 {
+		compatible = "argisense,ads124s08";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		#io-channel-cells = <1>;
+		reset-gpios = <&gpiob 12 GPIO_ACTIVE_LOW>;
+		drdy-gpios = <&gpiob 15 GPIO_ACTIVE_LOW>;
+		start-sync-gpios = <&gpiob 13 GPIO_ACTIVE_HIGH>;
+		reference-millivolt = <2500>;
+		idac-current-microamp = <250>;
+		conversion-timeout-ms = <300>;
+		pt1000-positive-input = <2>;
+		pt1000-negative-input = <3>;
+		channel-labels =
+			"AIN0_Vs_ISFET",
+			"AIN1_Vs_REFET",
+			"AIN2_PT1000_P",
+			"AIN3_PT1000_N",
+			"ISFET_BULK_ADC",
+			"ISFET_SUBS_ADC",
+			"REFET_BULK_ADC",
+			"REFET_SUBS_ADC",
+			"ISFET_DRAIN_ADC",
+			"REFET_DRAIN_ADC",
+			"GATE_BUFF_ADC";
+		status = "okay";
+	};
 };
 
 &adc1 {
-	pinctrl-0 = <&adc1_in1_pc0>;
+	pinctrl-0 = <&adc1_in14_pc5>;
 	pinctrl-names = "default";
 	st,adc-clock-source = "ASYNC";
 	st,adc-prescaler = <4>;

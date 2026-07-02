@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Texas Instruments ADS124S08 24-bit delta-sigma ADC used by the ArgiSense
+  pH front-end.
+
+  The schematic uses this device for ISFET/REFET monitoring and PT1000
+  measurement. Keep the devicetree node disabled until the final MCU pin
+  mapping for ADC_SPI_CS/SCLK/DIN/DOUT, ADC_SRDY, ADC_RESET, and ADC_START
+  is confirmed.
+
+compatible: "argisense,ads124s08"
+
+include: [adc-controller.yaml, spi-device.yaml]
+
+properties:
+  "#io-channel-cells":
+    const: 1
+
+  reset-gpios:
+    type: phandle-array
+    description: Active-low RESET pin.
+
+  drdy-gpios:
+    type: phandle-array
+    description: Data-ready pin. The schematic signal is ADC_SRDY.
+
+  start-sync-gpios:
+    type: phandle-array
+    description: START/SYNC pin. The schematic signal is ADC_START.
+
+  reference-millivolt:
+    type: int
+    default: 2500
+    description: ADC reference voltage in millivolts.
+
+  idac-current-microamp:
+    type: int
+    default: 250
+    enum:
+      - 0
+      - 10
+      - 50
+      - 100
+      - 250
+      - 500
+      - 750
+      - 1000
+      - 1500
+      - 2000
+    description: Current source setting used for the PT1000 input path.
+
+  conversion-timeout-ms:
+    type: int
+    default: 250
+    description: Timeout while waiting for DRDY after a single-shot conversion.
+
+  channel-labels:
+    type: string-array
+    description: Logical names for the external analog inputs.
+
+  pt1000-positive-input:
+    type: int
+    default: 2
+    description: ADS124S08 AIN index connected to PT1000_P.
+
+  pt1000-negative-input:
+    type: int
+    default: 3
+    description: ADS124S08 AIN index connected to PT1000_N.
+
+io-channel-cells:
+  - input

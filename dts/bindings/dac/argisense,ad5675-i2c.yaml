@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Analog Devices AD5675 8-channel 16-bit I2C DAC used by the ArgiSense pH
+  ISFET/REFET bias network.
+
+  The schematic address is 0x0c. DAC_I2C_SCL/DAC_I2C_SDA and DAC_RESET are
+  routed to the MCU. LDAC is optional because Sensor_Platform_V1 pH_V1_0 ties
+  LDAC low through a 0 ohm option and exposes only a test point.
+
+compatible: "argisense,ad5675-i2c"
+
+include: [dac-controller.yaml, i2c-device.yaml]
+
+properties:
+  "#io-channel-cells":
+    const: 1
+
+  reset-gpios:
+    type: phandle-array
+    description: Active-low DAC reset pin.
+
+  ldac-gpios:
+    type: phandle-array
+    description: |
+      Optional active-low LDAC pin. Current pH_V1_0 hardware ties LDAC low
+      instead of routing it to the MCU, so the board DTS should omit this
+      property unless a later PCB revision connects LDAC to a GPIO.
+
+  reference-millivolt:
+    type: int
+    default: 2500
+    description: External reference voltage supplied by REF3025.
+
+  gain:
+    type: int
+    default: 1
+    enum:
+      - 1
+      - 2
+    description: |
+      AD5675 output amplifier gain. Gain 1 gives a 0 V to VREF span, and
+      gain 2 gives a 0 V to 2 x VREF span.
+
+  resolution-bits:
+    type: int
+    const: 16
+    description: AD5675 DAC resolution.
+
+  channel-labels:
+    type: string-array
+    description: Logical pH bias output names for channels VOUT0..VOUT7.
+
+io-channel-cells:
+  - output

@@ -10,10 +10,17 @@ Firmware architecture and sensor integration notes are documented in:
 
 ```text
 docs/firmware-overview.md
-docs/firmware-overview.docx
 docs/firmware-overview.pdf
+docs/methane-pressure-firmware-overview.md
+docs/methane-pressure-firmware-overview.docx
+docs/methane-pressure-firmware-overview.pdf
+docs/ph-firmware-overview.md
+docs/ph-firmware-overview.pdf
 docs/dynament-platinum-methane.md
 docs/htu21d-humidity.md
+docs/sensor-io-mapping.md
+docs/sensor-io-mapping.pdf
+docs/sensor-platform-v1-ph-analysis.md
 ```
 
 ## Repository role
@@ -72,7 +79,10 @@ boards/argisense/argisense_mp_u575rg
 boards/argisense/argisense_ph_u575rg
 ```
 
-`argisense_mp_u575rg` is the methane + pressure board currently used by the application. `argisense_ph_u575rg` is separated for the pH PCB/pinout and is ready for a future pH firmware profile.
+`argisense_mp_u575rg` is the methane + pressure board and is documented in
+`docs/methane-pressure-firmware-overview.md`. `argisense_ph_u575rg` is separated
+for the pH PCB/pinout and has its own pH firmware entry point, runtime settings,
+register map, shell commands, and documentation in `docs/ph-firmware-overview.md`.
 
 The methane + pressure board uses the TE Connectivity `MS580305BA01-00`
 (`MS5803-05BA01`) pressure sensor on `spi1`. The sensor `PS` protocol-select
@@ -84,8 +94,10 @@ The methane sensor is a Dynament Platinum Series Hydrocarbon infrared sensor on
 `argisense,dynament-platinum-hydrocarbon`, using the Dynament/Premier
 live-data-simple request from AN0007.
 
-The humidity sensor is an HTU21D on `i2c2` at address `0x40`. This repository
-implements it as the out-of-tree `argisense,htu21d` Zephyr Sensor API driver.
+The methane + pressure board uses an HTU21D humidity/ambient-temperature sensor
+on `i2c2` at address `0x40`. This repository implements it as the out-of-tree
+`argisense,htu21d` Zephyr Sensor API driver. The pH board does not use HTU21D;
+its process temperature comes from the PT1000 input measured by ADS124S08.
 
 The external EEPROM is a Microchip `AT24C512C-SSHD-T` on `i2c1` at address
 `0x50`. It is mapped with Zephyr's standard `atmel,at24` EEPROM driver as a
@@ -100,13 +112,46 @@ argisense_mp_u575rg  -> methane + pressure firmware profile
 argisense_ph_u575rg  -> pH firmware profile
 ```
 
-Keep shared services such as MCUboot, RS485 framing, calibration storage, power sequencing, and 4-20 mA scaling in common code. Keep sensor-specific measurement logic and DAC mapping in product-specific files or snippets.
+Firmware source is split by product so the two boards can evolve independently:
+
+```text
+app/common/src/                         shared reusable services
+app/products/methane_pressure/src/      methane + pressure firmware
+app/products/ph/src/                    pH firmware
+```
+
+Keep protocol drivers in `drivers/`, board pinout in `boards/`, reusable
+services in `app/common/src/`, and sensor/product policy in the matching
+`app/products/<product>/src/` directory. See `app/README.md` for the concise
+source layout rule.
 
 Build the methane + pressure application with:
 
 ```bat
 set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
 py -3.12 -m west build -p always -b argisense_mp_u575rg argisense-zephyr-app
+```
+
+Build the pH firmware with:
+
+```bat
+set ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
+py -3.12 -m west build -p always -b argisense_ph_u575rg argisense-zephyr-app
+```
+
+or with the project build script:
+
+```bat
+argisense-zephyr-app\app\compile.bat ph
+```
+
+The pH firmware can use the same service profiles as the methane + pressure
+firmware:
+
+```bat
+argisense-zephyr-app\app\compile.bat ph usbconsole
+argisense-zephyr-app\app\compile.bat mcuboot ph usbupdate
+argisense-zephyr-app\app\compile.bat mcuboot ph hsi usbupdate
 ```
 
 To use the internal HSI 16 MHz oscillator instead of the external 25 MHz HSE crystal:
@@ -120,11 +165,14 @@ You can also build from the helper script:
 
 ```bat
 argisense-zephyr-app\app\compile.bat
+argisense-zephyr-app\app\compile.bat mp
+argisense-zephyr-app\app\compile.bat ph
 argisense-zephyr-app\app\compile.bat hsi
 argisense-zephyr-app\app\compile.bat usbconsole
 argisense-zephyr-app\app\compile.bat usbupdate
 argisense-zephyr-app\app\compile.bat hsi usbconsole
 argisense-zephyr-app\app\compile.bat hsi usbupdate
+argisense-zephyr-app\app\compile.bat ph hsi
 argisense-zephyr-app\app\compile.bat hsi flash
 argisense-zephyr-app\app\compile.bat flash-only
 argisense-zephyr-app\app\compile.bat flash-all-only
@@ -164,6 +212,8 @@ option:
 ```bat
 argisense-zephyr-app\app\compile.bat mcuboot hsi usbupdate
 argisense-zephyr-app\app\compile.bat mcuboot hsi usbupdate flash
+argisense-zephyr-app\app\compile.bat mcuboot ph usbupdate
+argisense-zephyr-app\app\compile.bat mcuboot ph usbupdate flash
 ```
 
 This profile exposes two CDC ACM virtual COM ports on the same USB-C connector:
@@ -254,23 +304,26 @@ py -3.12 argisense-zephyr-app\tools\rs485_dfu\argisense_rs485_dfu_gui.py
 
 The same GUI is the RS485 service tool for sealed-device work. Use `Auto
 Detect` to scan the selected adapter or all available COM ports, baud presets,
-data bits, parity, stop bits, and Unit IDs. Each response with device ID
-`0xA651` is added to the `Detected devices` table, and the scan continues until
-the requested range is complete. The default `Scan IDs` range is `1-10,247`;
-use `1-247` when the full RS485 network must be searched. `Stop Scan` can end a
-long scan early while keeping any devices already found. Manual connection is
-also available by selecting the USB-to-RS485 adapter COM port, the current
-Modbus baudrate, data bits, parity, stop bits, and unit ID. Then use:
+data bits, parity, stop bits, and Unit IDs. Each methane + pressure response
+with device ID `0xA651` and each pH response with device ID `0xA652` is added to
+the `Detected devices` table, and the scan continues until the requested range
+is complete. The default `Scan IDs` range is `1-10,247`; use `1-247` when the
+full RS485 network must be searched. `Stop Scan` can end a long scan early
+while keeping any devices already found. Manual connection is also available by
+selecting the USB-to-RS485 adapter COM port, the current Modbus baudrate, data
+bits, parity, stop bits, and unit ID. Then use:
 
 - `Firmware Update` to select `zephyr.signed.bin`, upload it, verify it, and
   optionally reboot into the MCUboot test image. The tab writes the configured
   DFU unlock key before touching image metadata or payload registers. It also
   provides `Confirm Image` for manually confirming the currently running
   MCUboot image after field validation.
-- `Sensors` to read methane, pressure, humidity, temperature, DAC current,
-  status, sample sequence, and uptime. This tab can poll continuously and draw
-  an auto-scaled trend graph. The graph `Window` field limits the visible plot
-  to the most recent samples so long runs stay readable.
+- `Sensors` to read methane, pressure, humidity, and ambient temperature on the
+  methane + pressure product, or pH and PT1000 temperature on the pH product,
+  together with DAC current, status, sample sequence, and uptime. This tab can
+  poll continuously and draw an auto-scaled trend graph. The graph `Window`
+  field limits the visible plot to the most recent samples so long runs stay
+  readable.
 - `Device Config` to read and write unit ID, baud preset, data bits, parity,
   stop bits, RS485 termination, measurement timing, and DAC current limits.
 
@@ -416,7 +469,8 @@ The `argisense_mp_u575rg` application is configured for low-power sensor duty cy
 - `+3V3_PRE` is kept enabled by default while idle because the Dynament Platinum methane sensor is intended for continuous powered operation.
 - `+3V3_PRE`, analog power, shared DAC/current-loop power, RS485 termination, pressure `PS`, and pressure chip select are controlled from `zephyr,user` GPIOs in the board DTS.
 - The firmware model exposes two 4-20 mA GP8302 outputs: DAC0 for methane on `i2c1`, and DAC1 for pressure on `i2c2`.
-- HTU21D humidity and ambient temperature sensing is mapped on `i2c2` at `0x40`.
+- HTU21D humidity and ambient temperature sensing is mapped on `i2c2` at `0x40`
+  for the methane + pressure product only.
 - The default methane DAC span is 0 ppm to 1000000 ppm to match a 0-100% volume Dynament methane sensor. Use 50000 ppm for a 0-5% volume ordered variant.
 - The default pressure DAC span is 0 Pa to 500000 Pa to match the selected 5 bar absolute pressure sensor.
 - The application periodically powers the sensor rails, waits for settling, keeps a short measurement window, powers external rails off again, then sleeps so STM32U575 can enter low-power idle states.
@@ -458,7 +512,8 @@ argisense/config
 The stored record currently contains:
 
 - Measurement period and measurement window.
-- Methane warm-up, methane polling period, and HTU21D read period.
+- Methane warm-up, methane polling period, and methane + pressure HTU21D read
+  period.
 - Methane and pressure DAC scaling ranges.
 - DAC 4-20 mA current limits and fault current.
 - Methane and pressure calibration offsets.
@@ -523,7 +578,8 @@ product mode that intentionally duty-cycles analog output.
 The firmware enables Zephyr shell on the selected console backend. The default
 backend is USART1. Build with `argisense-usb-console` or the helper script
 `usbconsole` option to move the shell to the USB-C CDC ACM virtual COM port.
-Useful diagnostic commands:
+The methane + pressure profile and the pH profile both register an `argisense`
+shell command set. Useful methane + pressure diagnostic commands:
 
 ```text
 argisense drivers
@@ -580,22 +636,53 @@ after the one-shot read.
 measurement task may overwrite the manual DAC value at the next measurement
 window.
 
+The pH firmware currently provides these shell commands:
+
+```text
+argisense drivers
+argisense sensors
+argisense rs485
+argisense rs485 1000 36
+argisense settings
+argisense settings get ph_high
+argisense settings set address 2
+argisense settings set parity 2
+argisense settings reset
+```
+
+The pH shell uses the same USB-C console profile. Its `argisense rs485` command
+dumps the pH register map, including service/configuration registers and the
+RS485 DFU register window when MCUboot DFU is enabled.
+
 ## RS485 Modbus RTU
 
-The methane + pressure board exposes RS485 on `usart2` with hardware DE on
-`PA1`. The board DTS defines an enabled `zephyr,modbus-serial` child node named
-`rs485_modbus`, and the application starts a Zephyr Modbus RTU server from the
-persistent runtime settings.
+The product boards expose RS485 on `usart2` with hardware DE on `PA1`, TX on
+`PA2`, RX on `PA3`, and termination enable on `PB0`. Each board DTS defines an
+enabled `zephyr,modbus-serial` child node named `rs485_modbus`, and the
+application starts a Zephyr Modbus RTU server from the persistent runtime
+settings.
 
-The Modbus transport and register ownership are intentionally separated:
+The Modbus transport and register ownership are intentionally separated. The
+methane + pressure product uses:
 
-- `app/src/argisense_rs485.c` starts the Zephyr Modbus RTU server and forwards
+- `app/products/methane_pressure/src/argisense_rs485.c` starts the Zephyr Modbus RTU server and forwards
   holding-register reads/writes to the register module.
-- `app/src/argisense_registers.c` owns the holding-register map, live
+- `app/products/methane_pressure/src/argisense_registers.c` owns the holding-register map, live
   measurement snapshot, validation, and persistent settings writes.
-- `app/src/argisense_shell.c` uses the same register module for the
+- `app/products/methane_pressure/src/argisense_shell.c` uses the same register module for the
   `argisense rs485` diagnostic command, so shell output and Modbus reads share
   one source of truth.
+
+The pH product mirrors the same architecture in:
+
+- `app/products/ph/src/argisense_rs485.c`
+- `app/products/ph/src/argisense_registers.c`
+- `app/products/ph/src/argisense_settings.c`
+- `app/products/ph/src/argisense_shell.c`
+
+The pH board uses device ID `0xA652` and register map version `3`. It supports
+RS485 read/configuration registers and the same RS485 DFU window starting at
+holding register `1000` when built with MCUboot.
 
 Default serial settings:
 

@@ -4,5 +4,6 @@
 # Examples:
 # rsource "sim7600/Kconfig"
 # rsource "mlx90640/Kconfig"
+rsource "adc/Kconfig"
 rsource "dac/Kconfig"
 rsource "sensor/Kconfig"

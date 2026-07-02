@@ -9,3 +9,14 @@ config DAC_GP8302
 	help
 	  Enable the GP8302 I2C current-loop DAC driver. The driver exposes the
 	  chip through Zephyr's DAC API as one 12-bit output channel.
+
+config DAC_AD5675_I2C
+	bool "AD5675 8-channel 16-bit I2C voltage DAC driver"
+	default y
+	depends on DAC
+	depends on I2C
+	depends on DT_HAS_ARGISENSE_AD5675_I2C_ENABLED
+	help
+	  Enable the AD5675 I2C voltage DAC driver used by the pH bias
+	  network. The driver exposes the chip through Zephyr's DAC API as
+	  eight 16-bit voltage output channels.

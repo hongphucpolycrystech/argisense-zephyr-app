@@ -3,6 +3,9 @@
 This note records the firmware assumptions for using a Dynament Platinum Series
 Hydrocarbon infrared sensor as the ArgiSense methane sensor.
 
+The full methane + pressure firmware overview is kept separately in
+`docs/methane-pressure-firmware-overview.md`.
+
 ## Selected Sensor Family
 
 The selected methane sensor family is:
@@ -52,12 +55,31 @@ power-cycling the methane sensor.
 
 ## Zephyr Board Mapping
 
-The sensor is mapped on `uart4`:
+The firmware maps the sensor on `uart4`:
 
 | Signal | MCU pin |
 | --- | --- |
 | Methane TX from MCU | `PC10 / UART4_TX` |
 | Methane RX to MCU | `PC11 / UART4_RX` |
+
+Schematic review note:
+
+The updated `Sensor_Platform_V1 (1).pdf` sheet 9 shows `METH_UART_TXD` on
+`PC8` and `METH_UART_RXD` on `PC7`, and sheet 14 routes those nets through
+0 ohm options to the methane sensor connector `SENSOR_COMM1..4`. That is a
+hardware/firmware mismatch: the Zephyr STM32U575RGT6 pinctrl data does not
+provide UART TX/RX alternate functions on `PC8`/`PC7`.
+
+Keep the firmware mapping on a valid hardware UART pair and update the PCB
+route to `PC10`/`PC11`, or choose another valid UART TX/RX pair and update both
+the schematic and DTS together. Do not remap DTS to `PC8`/`PC7` as a hardware
+UART unless the MCU pinout is changed or a software UART solution is explicitly
+designed and validated.
+
+`SENSOR_COMM1..4` are connector-side nets, not independent MCU GPIOs. They do
+not need separate DTS entries when they are populated as the Dynament UART path.
+For the consolidated IO mapping and conflict list across both product variants,
+see `docs/sensor-io-mapping.md`.
 
 DTS node:
 
@@ -171,7 +193,8 @@ sensor reports warm-up or fault data.
 Implemented now:
 
 - DTS binding for `argisense,dynament-platinum-hydrocarbon`.
-- `uart4` board node for the Dynament methane sensor.
+- `uart4` board node for the Dynament methane sensor, pending PCB routing to a
+  valid UART TX/RX pin pair.
 - Out-of-tree Zephyr sensor driver in `drivers/sensor/dynament_platinum`.
 - Startup mapping check through the methane sensor device.
 - AN0007 live-data-simple UART request, stream parser, byte-stuff handling, and

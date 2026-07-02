@@ -29,19 +29,48 @@ list(APPEND SNIPPET_ROOT ${CMAKE_CURRENT_LIST_DIR})
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(argisense)
 
-target_sources(app PRIVATE
-  app/src/main.c
-  app/src/current_loop_output.c
-  app/src/argisense_power.c
-  app/src/argisense_registers.c
-  app/src/argisense_settings.c
-  app/src/argisense_rs485.c
-  app/src/argisense_shell.c
+set(ARGISENSE_APP_ROOT ${CMAKE_CURRENT_LIST_DIR}/app)
+set(ARGISENSE_COMMON_SRC ${ARGISENSE_APP_ROOT}/common/src)
+set(ARGISENSE_MP_SRC ${ARGISENSE_APP_ROOT}/products/methane_pressure/src)
+set(ARGISENSE_PH_SRC ${ARGISENSE_APP_ROOT}/products/ph/src)
+
+target_include_directories(app PRIVATE
+  ${ARGISENSE_COMMON_SRC}
 )
+
+if(CONFIG_BOARD_ARGISENSE_PH_U575RG)
+  target_include_directories(app PRIVATE
+    ${ARGISENSE_PH_SRC}
+  )
+  target_sources(app PRIVATE
+    ${ARGISENSE_PH_SRC}/main.c
+    ${ARGISENSE_PH_SRC}/argisense_registers.c
+    ${ARGISENSE_PH_SRC}/argisense_settings.c
+    ${ARGISENSE_PH_SRC}/argisense_rs485.c
+    ${ARGISENSE_PH_SRC}/argisense_shell.c
+    ${ARGISENSE_PH_SRC}/current_loop_output.c
+    ${ARGISENSE_PH_SRC}/ph_measurement.c
+  )
+elseif(CONFIG_BOARD_ARGISENSE_MP_U575RG)
+  target_include_directories(app PRIVATE
+    ${ARGISENSE_MP_SRC}
+  )
+  target_sources(app PRIVATE
+    ${ARGISENSE_MP_SRC}/main.c
+    ${ARGISENSE_MP_SRC}/current_loop_output.c
+    ${ARGISENSE_MP_SRC}/argisense_power.c
+    ${ARGISENSE_MP_SRC}/argisense_registers.c
+    ${ARGISENSE_MP_SRC}/argisense_settings.c
+    ${ARGISENSE_MP_SRC}/argisense_rs485.c
+    ${ARGISENSE_MP_SRC}/argisense_shell.c
+  )
+else()
+  message(FATAL_ERROR "Unsupported ArgiSense board. Expected argisense_mp_u575rg or argisense_ph_u575rg.")
+endif()
 target_sources_ifdef(CONFIG_ARGISENSE_RS485_DFU app PRIVATE
-  app/src/argisense_dfu.c
+  ${ARGISENSE_COMMON_SRC}/argisense_dfu.c
 )
 target_sources_ifdef(CONFIG_ARGISENSE_USB_DEVICE app PRIVATE
-  app/src/argisense_usb.c
+  ${ARGISENSE_COMMON_SRC}/argisense_usb.c
 )
 argisense_add_module_subdirs()

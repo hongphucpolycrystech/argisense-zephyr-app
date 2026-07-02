@@ -7,6 +7,7 @@ for %%I in ("%APP_DIR%\..") do set "WORKSPACE_DIR=%%~fI"
 
 set "APP_NAME=argisense-zephyr-app"
 if not defined BOARD set "BOARD=argisense_mp_u575rg"
+set "PRODUCT_PROFILE="
 if not defined PRISTINE set "PRISTINE=always"
 if not defined ZEPHYR_SDK_INSTALL_DIR set "ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1"
 if not defined ARGISENSE_DEFAULT_FLASH_DEV_ID set "ARGISENSE_DEFAULT_FLASH_DEV_ID=003600253234510237333934"
@@ -44,6 +45,8 @@ if /I "%ARG1%"=="--help" goto :usage
 goto :parse_args
 
 :after_parse_args
+
+call :infer_product_profile
 
 set "SNIPPET_ARGS="
 if defined CLOCK_SNIPPET_ARGS set "SNIPPET_ARGS=%SNIPPET_ARGS% %CLOCK_SNIPPET_ARGS%"
@@ -104,6 +107,7 @@ echo ArgiSense Zephyr build
 echo ======================
 echo Workspace : %WORKSPACE_DIR%
 echo App       : %APP_DIR%
+echo Product   : %PRODUCT_PROFILE%
 echo Board     : %BOARD%
 echo Mode      : %BUILD_MODE%
 echo Clock     : %CLOCK_SOURCE%
@@ -239,6 +243,8 @@ exit /b 0
 echo.
 echo Usage:
 echo   compile.bat
+echo   compile.bat mp
+echo   compile.bat ph
 echo   compile.bat hse
 echo   compile.bat hsi
 echo   compile.bat usbconsole
@@ -247,6 +253,8 @@ echo   compile.bat hsi usbconsole
 echo   compile.bat hsi usbupdate
 echo   compile.bat hsi ^<board^>
 echo   compile.bat ^<board^>
+echo   compile.bat hsi mp
+echo   compile.bat hsi ph
 echo   compile.bat version ^<major.minor.patch+build^>
 echo   compile.bat hsi version ^<major.minor.patch+build^>
 echo   compile.bat flash
@@ -257,17 +265,22 @@ echo   compile.bat stlink ^<st-link-serial^> flash-only
 echo   compile.bat --dev-id ^<st-link-serial^> flash-only
 echo   compile.bat hsi flash
 echo   compile.bat mcuboot
+echo   compile.bat mcuboot mp
+echo   compile.bat mcuboot ph
 echo   compile.bat mcuboot hsi
 echo   compile.bat mcuboot usbconsole
 echo   compile.bat mcuboot usbupdate
 echo   compile.bat mcuboot hsi usbconsole
 echo   compile.bat mcuboot hsi usbupdate
 echo   compile.bat mcuboot hsi ^<board^>
+echo   compile.bat mcuboot hsi mp
+echo   compile.bat mcuboot hsi ph
 echo   compile.bat mcuboot hsi version ^<major.minor.patch+build^>
 echo   compile.bat mcuboot hsi version ^<major.minor.patch+build^> flash
 echo   compile.bat mcuboot hsi version ^<major.minor.patch+build^> flash-all
 echo.
 echo Defaults:
+echo   Product alias default: mp
 echo   BOARD=argisense_mp_u575rg
 echo   PRISTINE=always
 echo   ZEPHYR_SDK_INSTALL_DIR=C:\Users\USER\zephyr-sdk-1.0.1
@@ -281,6 +294,8 @@ echo   ARGISENSE_DEFAULT_FLASH_DEV_ID defaults to 003600253234510237333934
 echo.
 echo Examples:
 echo   compile.bat
+echo   compile.bat mp
+echo   compile.bat ph
 echo   compile.bat hsi
 echo   compile.bat usbconsole
 echo   compile.bat usbupdate
@@ -289,12 +304,15 @@ echo   compile.bat hsi usbupdate
 echo   compile.bat flash-only
 echo   compile.bat flash-all-only
 echo   compile.bat hsi flash
+echo   compile.bat ph hsi
 echo   compile.bat mcuboot
+echo   compile.bat mcuboot ph
 echo   compile.bat mcuboot hsi
 echo   compile.bat mcuboot usbconsole
 echo   compile.bat mcuboot usbupdate
 echo   compile.bat mcuboot hsi usbconsole
 echo   compile.bat mcuboot hsi usbupdate
+echo   compile.bat mcuboot hsi ph
 echo   compile.bat version 1.2.0+7
 echo   compile.bat mcuboot hsi version 1.2.0+7
 echo   compile.bat mcuboot hsi version 1.2.0+7 flash
@@ -315,6 +333,36 @@ if /I "%ARG1%"=="help" goto :usage
 if /I "%ARG1%"=="/?" goto :usage
 if /I "%ARG1%"=="-h" goto :usage
 if /I "%ARG1%"=="--help" goto :usage
+if /I "%ARG1%"=="mp" (
+	set "BOARD=argisense_mp_u575rg"
+	set "PRODUCT_PROFILE=methane-pressure"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="methane" (
+	set "BOARD=argisense_mp_u575rg"
+	set "PRODUCT_PROFILE=methane-pressure"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="methane-pressure" (
+	set "BOARD=argisense_mp_u575rg"
+	set "PRODUCT_PROFILE=methane-pressure"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="methane_pressure" (
+	set "BOARD=argisense_mp_u575rg"
+	set "PRODUCT_PROFILE=methane-pressure"
+	call :shift_args
+	goto :parse_args
+)
+if /I "%ARG1%"=="ph" (
+	set "BOARD=argisense_ph_u575rg"
+	set "PRODUCT_PROFILE=ph"
+	call :shift_args
+	goto :parse_args
+)
 if /I "%ARG1%"=="mcuboot" (
 	set "BUILD_MODE=mcuboot"
 	set "SYSBUILD_ARGS=--sysbuild"
@@ -432,6 +480,18 @@ set "ARG6=%ARG7%"
 set "ARG7=%ARG8%"
 set "ARG8=%ARG9%"
 set "ARG9="
+exit /b 0
+
+:infer_product_profile
+if /I "%BOARD%"=="argisense_mp_u575rg" (
+	set "PRODUCT_PROFILE=methane-pressure"
+	exit /b 0
+)
+if /I "%BOARD%"=="argisense_ph_u575rg" (
+	set "PRODUCT_PROFILE=ph"
+	exit /b 0
+)
+if not defined PRODUCT_PROFILE set "PRODUCT_PROFILE=custom"
 exit /b 0
 
 :write_version

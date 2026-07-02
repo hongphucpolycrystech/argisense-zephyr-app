@@ -68,7 +68,7 @@ Driver behavior:
 ## Runtime Flow
 
 The main measurement loop reads HTU21D through `argisense_read_humidity_sample()`
-in `app/src/main.c`.
+in `app/products/methane_pressure/src/main.c`.
 
 The read period is controlled by persistent runtime settings, with the default
 coming from:

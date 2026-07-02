@@ -4,5 +4,6 @@
 # Examples:
 # add_subdirectory_ifdef(CONFIG_SIM7600 sim7600)
 # add_subdirectory_ifdef(CONFIG_MLX90640 mlx90640)
-add_subdirectory_ifdef(CONFIG_DAC_GP8302 dac)
+add_subdirectory_ifdef(CONFIG_ARGISENSE_ADS124S08 adc)
+add_subdirectory_ifdef(CONFIG_DAC dac)
 add_subdirectory_ifdef(CONFIG_SENSOR sensor)

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Linear Technology / Analog Devices LT3582 dual-output positive/negative
+  rail generator used by the ArgiSense pH analog front-end.
+
+  The schematic names the enable signal U_O_D_ANA_PWR_EN and the rails
+  +5V_AN / -5V_AN. If the product needs runtime rail configuration over I2C,
+  add the confirmed I2C address and enable this node with a driver.
+
+compatible: "argisense,lt3582"
+
+include: [i2c-device.yaml]
+
+properties:
+  enable-gpios:
+    type: phandle-array
+    description: GPIO that enables the analog positive/negative rails.
+
+  positive-output-millivolt:
+    type: int
+    default: 5000
+    description: Expected positive analog rail voltage.
+
+  negative-output-abs-millivolt:
+    type: int
+    default: 5000
+    description: Absolute voltage magnitude of the negative analog rail.
+
+  startup-delay-ms:
+    type: int
+    default: 20
+    description: Delay after enabling the analog rails before ADC/DAC access.

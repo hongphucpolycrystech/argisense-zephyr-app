@@ -111,7 +111,12 @@ STATUS_NAMES = {
 
 DEFAULT_CHUNK_BYTES = 96
 DEFAULT_DFU_UNLOCK_KEY = "0xA65D"
-ARGISENSE_DEVICE_ID = 0xA651
+ARGISENSE_MP_DEVICE_ID = 0xA651
+ARGISENSE_PH_DEVICE_ID = 0xA652
+ARGISENSE_DEVICE_PRODUCTS = {
+    ARGISENSE_MP_DEVICE_ID: "methane-pressure",
+    ARGISENSE_PH_DEVICE_ID: "pH",
+}
 DISCOVERY_BAUDS = ("115200", "57600", "38400", "19200", "9600")
 DISCOVERY_PARITY_LABELS = ("None (N)", "Even (E)", "Odd (O)")
 DISCOVERY_STOP_BITS = ("2", "1")
@@ -171,6 +176,14 @@ def crc16_modbus(data: bytes) -> int:
             else:
                 crc >>= 1
     return crc & 0xFFFF
+
+
+def product_name(device_id: int) -> str:
+    return ARGISENSE_DEVICE_PRODUCTS.get(device_id, f"unknown-0x{device_id:04X}")
+
+
+def is_ph_device(device_id: int) -> bool:
+    return device_id == ARGISENSE_PH_DEVICE_ID
 
 
 def append_crc(frame: bytes) -> bytes:
@@ -523,9 +536,10 @@ class App(tk.Tk):
         self.worker: threading.Thread | None = None
         self.action_buttons: list[ttk.Button] = []
         self.monitoring = False
-        self.sample_history: list[dict[str, float | int | bool | None]] = []
+        self.sample_history: list[dict[str, float | int | bool | str | None]] = []
         self.detected_devices: list[dict[str, int | str]] = []
         self.scan_cancel_event = threading.Event()
+        self.current_product = "methane-pressure"
 
         self.port_var = tk.StringVar()
         self.baud_var = tk.StringVar(value="115200")
@@ -555,6 +569,19 @@ class App(tk.Tk):
             "uptime": tk.StringVar(value="-"),
             "status": tk.StringVar(value="-"),
         }
+        self.sensor_label_vars = {
+            "methane": tk.StringVar(value="Methane"),
+            "pressure": tk.StringVar(value="Pressure"),
+            "humidity": tk.StringVar(value="Humidity"),
+            "ambient_temp": tk.StringVar(value="Ambient temp"),
+            "pressure_temp": tk.StringVar(value="Pressure temp"),
+            "dac0": tk.StringVar(value="DAC0 methane"),
+            "dac1": tk.StringVar(value="DAC1 pressure"),
+            "sequence": tk.StringVar(value="Sample seq"),
+            "uptime": tk.StringVar(value="Uptime"),
+            "status": tk.StringVar(value="Status"),
+        }
+        self.sensor_value_rows: dict[str, tuple[ttk.Label, ttk.Label]] = {}
         self.config_vars = {
             "unit_id": tk.StringVar(value="1"),
             "baud_preset": tk.StringVar(value="115200"),
@@ -661,7 +688,7 @@ class App(tk.Tk):
 
         detected = ttk.LabelFrame(root, text="Detected devices")
         detected.pack(fill=tk.X, pady=(10, 0))
-        columns = ("port", "unit", "baud", "framing", "map")
+        columns = ("port", "product", "unit", "baud", "framing", "map")
         self.detected_tree = ttk.Treeview(
             detected,
             columns=columns,
@@ -671,6 +698,7 @@ class App(tk.Tk):
         )
         headings = {
             "port": ("Port", 120),
+            "product": ("Product", 120),
             "unit": ("Unit ID", 70),
             "baud": ("Baud", 90),
             "framing": ("Framing", 80),
@@ -827,10 +855,14 @@ class App(tk.Tk):
                 row = index // 3
                 col = (index % 3) * 2
                 value_columnspan = 1
-            ttk.Label(values, text=label).grid(
+            label_widget = ttk.Label(
+                values, textvariable=self.sensor_label_vars[key]
+            )
+            value_widget = ttk.Label(values, textvariable=self.sensor_vars[key])
+            label_widget.grid(
                 row=row, column=col, sticky=tk.W, padx=(6, 4), pady=2
             )
-            ttk.Label(values, textvariable=self.sensor_vars[key]).grid(
+            value_widget.grid(
                 row=row,
                 column=col + 1,
                 columnspan=value_columnspan,
@@ -838,6 +870,7 @@ class App(tk.Tk):
                 padx=(4, 18),
                 pady=2,
             )
+            self.sensor_value_rows[key] = (label_widget, value_widget)
         values.columnconfigure(1, weight=1)
         values.columnconfigure(3, weight=1)
         values.columnconfigure(5, weight=1)
@@ -1229,7 +1262,7 @@ class App(tk.Tk):
             attempts = 0
             last_error: Exception | None = None
             found_devices: list[dict[str, int | str]] = []
-            found_keys: set[tuple[str, int, int]] = set()
+            found_keys: set[tuple[str, int, int, int]] = set()
 
             self.log(
                 "Auto detect started: "
@@ -1276,9 +1309,12 @@ class App(tk.Tk):
                                     client.unit_id = unit_id
                                     try:
                                         regs = client.read_holding(REG_DEVICE_ID, 2)
-                                        if regs[REG_DEVICE_ID] == ARGISENSE_DEVICE_ID:
+                                        device_id = regs[REG_DEVICE_ID]
+                                        if device_id in ARGISENSE_DEVICE_PRODUCTS:
                                             found = {
                                                 "port": port,
+                                                "device_id": device_id,
+                                                "product": product_name(device_id),
                                                 "baudrate": baudrate,
                                                 "unit_id": unit_id,
                                                 "data_bits_label": data_label,
@@ -1286,7 +1322,7 @@ class App(tk.Tk):
                                                 "stop_bits_label": stop_label,
                                                 "map_version": regs[REG_MAP_VERSION],
                                             }
-                                            key = (port, baudrate, unit_id)
+                                            key = (port, baudrate, unit_id, device_id)
                                             if key not in found_keys:
                                                 found_keys.add(key)
                                                 found_devices.append(found)
@@ -1304,7 +1340,7 @@ class App(tk.Tk):
                                         else:
                                             self.log(
                                                 f"{port} unit={unit_id} responded with "
-                                                f"device_id=0x{regs[REG_DEVICE_ID]:04X}"
+                                                f"device_id=0x{device_id:04X}"
                                             )
                                     except Exception as exc:  # noqa: BLE001 - line noise/empty IDs are expected.
                                         last_error = exc
@@ -1370,18 +1406,41 @@ class App(tk.Tk):
         except Exception as exc:  # noqa: BLE001 - displayed in GUI.
             self.messages.put(("error", str(exc)))
 
-    def _read_sample(self, client: ModbusRtuClient) -> dict[str, float | int | bool | None]:
+    def _read_sample(self, client: ModbusRtuClient) -> dict[str, float | int | bool | str | None]:
         live = client.read_holding(REG_DEVICE_ID, 20)
-        diagnostics = client.read_holding(70, 13)
+        device_id = live[REG_DEVICE_ID]
         status_flags = live[REG_STATUS_FLAGS]
-        methane_ppm_x100 = signed32_from_words(live[10], live[11])
-        pressure_pa = signed32_from_words(live[12], live[13])
-        humidity_rh_x100 = signed16(diagnostics[10])
-        ambient_temp_centi_c = signed16(diagnostics[11])
-        pressure_temp_centi_c = signed16(diagnostics[4])
+        if is_ph_device(device_id):
+            diagnostics = client.read_holding(70, 7)
+            ph_x1000 = signed32_from_words(live[10], live[11])
+            temperature_centi_c = signed32_from_words(live[12], live[13])
+            ph_error = signed16(diagnostics[0])
+            temperature_error = signed16(diagnostics[1])
+            humidity_rh = None
+            ambient_temp_c = None
+            humidity_error_code = 0
+            primary_value = ph_x1000 / 1000.0
+            secondary_value = temperature_centi_c / 100.0
+            pressure_temp_c = temperature_centi_c / 100.0
+        else:
+            diagnostics = client.read_holding(70, 13)
+            methane_ppm_x100 = signed32_from_words(live[10], live[11])
+            pressure_pa = signed32_from_words(live[12], live[13])
+            humidity_rh_x100 = signed16(diagnostics[10])
+            ambient_temp_centi_c = signed16(diagnostics[11])
+            pressure_temp_centi_c = signed16(diagnostics[4])
+            ph_error = signed16(diagnostics[2])
+            temperature_error = signed16(diagnostics[3])
+            humidity_error_code = signed16(diagnostics[12])
+            humidity_rh = humidity_rh_x100 / 100.0
+            ambient_temp_c = ambient_temp_centi_c / 100.0
+            primary_value = methane_ppm_x100 / 100.0
+            secondary_value = pressure_pa
+            pressure_temp_c = pressure_temp_centi_c / 100.0
         return {
             "timestamp": time.time(),
-            "device_id": live[REG_DEVICE_ID],
+            "device_id": device_id,
+            "product": product_name(device_id),
             "map_version": live[REG_MAP_VERSION],
             "status_flags": status_flags,
             "methane_valid": bool(status_flags & 0x0001),
@@ -1389,11 +1448,11 @@ class App(tk.Tk):
             "sample_ready": bool(status_flags & 0x0004),
             "humidity_valid": bool(status_flags & 0x0010),
             "humidity_error": bool(status_flags & 0x0020),
-            "methane_ppm": methane_ppm_x100 / 100.0,
-            "pressure_pa": pressure_pa,
-            "humidity_rh": humidity_rh_x100 / 100.0,
-            "ambient_temp_c": ambient_temp_centi_c / 100.0,
-            "pressure_temp_c": pressure_temp_centi_c / 100.0,
+            "methane_ppm": primary_value,
+            "pressure_pa": secondary_value,
+            "humidity_rh": humidity_rh,
+            "ambient_temp_c": ambient_temp_c,
+            "pressure_temp_c": pressure_temp_c,
             "dac0_ua": live[REG_DAC0_CURRENT_UA],
             "dac1_ua": live[REG_DAC1_CURRENT_UA],
             "sequence": u32_from_words(live[REG_SAMPLE_SEQUENCE_HI], live[REG_SAMPLE_SEQUENCE_HI + 1]),
@@ -1401,22 +1460,24 @@ class App(tk.Tk):
                 live[REG_SAMPLE_UPTIME_SECONDS_HI],
                 live[REG_SAMPLE_UPTIME_SECONDS_HI + 1],
             ),
-            "methane_error": signed16(diagnostics[2]),
-            "pressure_error": signed16(diagnostics[3]),
-            "humidity_error_code": signed16(diagnostics[12]),
+            "methane_error": ph_error,
+            "pressure_error": temperature_error,
+            "humidity_error_code": humidity_error_code,
         }
 
     def _read_config_snapshot(self, client: ModbusRtuClient) -> dict[str, int]:
         regs = client.read_holding(REG_DEVICE_ID, 34)
+        device_id = regs[REG_DEVICE_ID]
         map_version = regs[REG_MAP_VERSION]
         parity = 0
         stop_bits = 2
         data_bits = 8
-        if map_version >= 6:
+        if is_ph_device(device_id) or map_version >= 6:
             parity, stop_bits, data_bits = client.read_holding(REG_RS485_PARITY, 3)
         elif map_version >= 5:
             parity, stop_bits = client.read_holding(REG_RS485_PARITY, 2)
         return {
+            "device_id": device_id,
             "map_version": map_version,
             "unit_id": regs[REG_MODBUS_ADDRESS],
             "baudrate": u32_from_words(regs[REG_BAUDRATE_HI], regs[REG_BAUDRATE_LO]),
@@ -1440,12 +1501,17 @@ class App(tk.Tk):
             client = self._make_client()
             try:
                 self.log("Probe started")
-                map_version = client.read_holding(1, 1)[0]
+                identity = client.read_holding(REG_DEVICE_ID, 2)
+                device_id = identity[REG_DEVICE_ID]
+                map_version = identity[REG_MAP_VERSION]
                 max_chunk = client.read_holding(DFU_REG_MAX_CHUNK_BYTES, 1)[0]
                 status, error = client.read_holding(DFU_REG_STATUS, 2)
-                self.log(f"Register map version: {map_version}")
+                self.log(
+                    f"Device: {product_name(device_id)} "
+                    f"device_id=0x{device_id:04X} map=v{map_version}"
+                )
                 self.log(f"DFU max chunk: {max_chunk} bytes")
-                if map_version >= 7:
+                if is_ph_device(device_id) or map_version >= 7:
                     remaining_s = client.read_holding(
                         DFU_REG_UNLOCK_REMAINING_S, 1
                     )[0]
@@ -1453,7 +1519,7 @@ class App(tk.Tk):
                 self.log(
                     f"DFU status: {STATUS_NAMES.get(status, status)} error={signed16(error)}"
                 )
-                if map_version >= 6:
+                if is_ph_device(device_id) or map_version >= 6:
                     parity, stop_bits, data_bits = client.read_holding(
                         REG_RS485_PARITY, 3
                     )
@@ -1641,32 +1707,100 @@ class App(tk.Tk):
             raise ValueError("dac_min must be lower than dac_max")
         return values
 
-    def _update_sample_ui(self, sample: dict[str, float | int | bool | None]) -> None:
-        self.sensor_vars["methane"].set(
-            format_scaled(sample.get("methane_ppm"), 1.0, "ppm", 2)
-        )
-        self.sensor_vars["pressure"].set(
-            format_scaled(sample.get("pressure_pa"), 1.0, "Pa", 0)
-        )
-        self.sensor_vars["humidity"].set(
-            format_scaled(sample.get("humidity_rh"), 1.0, "%RH", 2)
-        )
-        self.sensor_vars["ambient_temp"].set(
-            format_scaled(sample.get("ambient_temp_c"), 1.0, "degC", 2)
-        )
-        self.sensor_vars["pressure_temp"].set(
-            format_scaled(sample.get("pressure_temp_c"), 1.0, "degC", 2)
-        )
+    def _set_sensor_labels_mp(self) -> None:
+        labels = {
+            "methane": "Methane",
+            "pressure": "Pressure",
+            "humidity": "Humidity",
+            "ambient_temp": "Ambient temp",
+            "pressure_temp": "Pressure temp",
+            "dac0": "DAC0 methane",
+            "dac1": "DAC1 pressure",
+            "sequence": "Sample seq",
+            "uptime": "Uptime",
+            "status": "Status",
+        }
+        for key, label in labels.items():
+            self.sensor_label_vars[key].set(label)
+        for key in ("humidity", "ambient_temp", "pressure_temp"):
+            self._set_sensor_row_visible(key, True)
+
+    def _set_sensor_labels_ph(self) -> None:
+        labels = {
+            "methane": "pH",
+            "pressure": "PT1000 temp",
+            "humidity": "Humidity",
+            "ambient_temp": "Ambient temp",
+            "pressure_temp": "Sensor temp",
+            "dac0": "DAC0 pH",
+            "dac1": "DAC1 temp",
+            "sequence": "Sample seq",
+            "uptime": "Uptime",
+            "status": "Status",
+        }
+        for key, label in labels.items():
+            self.sensor_label_vars[key].set(label)
+        for key in ("humidity", "ambient_temp", "pressure_temp"):
+            self._set_sensor_row_visible(key, False)
+
+    def _set_sensor_row_visible(self, key: str, visible: bool) -> None:
+        widgets = self.sensor_value_rows.get(key)
+        if widgets is None:
+            return
+        for widget in widgets:
+            if visible:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _set_sensor_labels_for_product(self, product: str) -> None:
+        if product == "pH":
+            self._set_sensor_labels_ph()
+        else:
+            self._set_sensor_labels_mp()
+
+    def _update_sample_ui(self, sample: dict[str, float | int | bool | str | None]) -> None:
+        device_id = int(sample.get("device_id") or 0)
+        self.current_product = product_name(device_id)
+        if is_ph_device(device_id):
+            self._set_sensor_labels_ph()
+            self.sensor_vars["methane"].set(
+                format_scaled(sample.get("methane_ppm"), 1.0, "pH", 3)
+            )
+            self.sensor_vars["pressure"].set(
+                format_scaled(sample.get("pressure_pa"), 1.0, "degC", 2)
+            )
+            self.sensor_vars["humidity"].set("-")
+            self.sensor_vars["ambient_temp"].set("-")
+            self.sensor_vars["pressure_temp"].set("-")
+        else:
+            self._set_sensor_labels_mp()
+            self.sensor_vars["methane"].set(
+                format_scaled(sample.get("methane_ppm"), 1.0, "ppm", 2)
+            )
+            self.sensor_vars["pressure"].set(
+                format_scaled(sample.get("pressure_pa"), 1.0, "Pa", 0)
+            )
+            self.sensor_vars["humidity"].set(
+                format_scaled(sample.get("humidity_rh"), 1.0, "%RH", 2)
+            )
+            self.sensor_vars["ambient_temp"].set(
+                format_scaled(sample.get("ambient_temp_c"), 1.0, "degC", 2)
+            )
+            self.sensor_vars["pressure_temp"].set(
+                format_scaled(sample.get("pressure_temp_c"), 1.0, "degC", 2)
+            )
         self.sensor_vars["dac0"].set(format_scaled(sample.get("dac0_ua"), 1.0, "uA", 0))
         self.sensor_vars["dac1"].set(format_scaled(sample.get("dac1_ua"), 1.0, "uA", 0))
         self.sensor_vars["sequence"].set(str(sample.get("sequence", "-")))
         self.sensor_vars["uptime"].set(format_scaled(sample.get("uptime_s"), 1.0, "s", 0))
         status = []
-        for label, key in (
-            ("methane", "methane_valid"),
-            ("pressure", "pressure_valid"),
-            ("humidity", "humidity_valid"),
-        ):
+        status_fields = (
+            (("pH", "methane_valid"), ("temperature", "pressure_valid"))
+            if is_ph_device(device_id)
+            else (("methane", "methane_valid"), ("pressure", "pressure_valid"), ("humidity", "humidity_valid"))
+        )
+        for label, key in status_fields:
             status.append(f"{label}={'ok' if sample.get(key) else 'bad'}")
         self.sensor_vars["status"].set(", ".join(status))
 
@@ -1676,6 +1810,8 @@ class App(tk.Tk):
         self._redraw_graph()
 
     def _update_config_ui(self, config: dict[str, int]) -> None:
+        self.current_product = product_name(config.get("device_id", 0))
+        self._set_sensor_labels_for_product(self.current_product)
         self.config_vars["map_version"].set(str(config["map_version"]))
         self.config_vars["unit_id"].set(str(config["unit_id"]))
         self.config_vars["period_s"].set(str(config["period_s"]))
@@ -1712,6 +1848,8 @@ class App(tk.Tk):
         self.data_bits_var.set(str(connection["data_bits_label"]))
         self.parity_var.set(str(connection["parity_label"]))
         self.stop_bits_var.set(str(connection["stop_bits_label"]))
+        self.current_product = str(connection.get("product", "methane-pressure"))
+        self._set_sensor_labels_for_product(self.current_product)
 
     def _format_connection_summary(self, connection: dict[str, int | str]) -> str:
         parity = PARITY_OPTIONS[str(connection["parity_label"])]
@@ -1721,7 +1859,8 @@ class App(tk.Tk):
             f"{connection['stop_bits_label']}"
         )
         return (
-            f"{connection['port']} unit={connection['unit_id']} "
+            f"{connection.get('product', 'ArgiSense')} {connection['port']} "
+            f"unit={connection['unit_id']} "
             f"{connection['baudrate']} {framing} "
             f"map=v{connection['map_version']}"
         )
@@ -1747,6 +1886,7 @@ class App(tk.Tk):
             iid=iid,
             values=(
                 str(connection["port"]),
+                str(connection.get("product", "-")),
                 str(connection["unit_id"]),
                 str(connection["baudrate"]),
                 framing,
@@ -1764,7 +1904,7 @@ class App(tk.Tk):
             return DEFAULT_GRAPH_WINDOW_SAMPLES
         return max(2, min(window, MAX_HISTORY_SAMPLES))
 
-    def _visible_graph_history(self) -> list[dict[str, float | int | bool | None]]:
+    def _visible_graph_history(self) -> list[dict[str, float | int | bool | str | None]]:
         window = self._graph_window_samples()
         return self.sample_history[-window:]
 
@@ -1785,11 +1925,25 @@ class App(tk.Tk):
         for grid_index in range(1, 5):
             x = left + ((right - left) * grid_index / 5)
             canvas.create_line(x, top, x, bottom, fill="#f1f5f9")
+        latest_device_id = int(visible_history[-1].get("device_id") or 0) if visible_history else 0
+        if is_ph_device(latest_device_id):
+            graph_title = "Auto-scaled trend: pH, PT1000 temperature degC"
+            series = [
+                ("methane_ppm", "pH", "#15803d"),
+                ("pressure_pa", "PT1000 temperature degC", "#2563eb"),
+            ]
+        else:
+            graph_title = "Auto-scaled trend: methane ppm, pressure Pa, humidity %RH"
+            series = [
+                ("methane_ppm", "Methane ppm", "#15803d"),
+                ("pressure_pa", "Pressure Pa", "#2563eb"),
+                ("humidity_rh", "Humidity %RH", "#d97706"),
+            ]
         canvas.create_text(
             left,
             10,
             anchor=tk.W,
-            text="Auto-scaled trend: methane ppm, pressure Pa, humidity %RH",
+            text=graph_title,
             fill="#334155",
         )
         canvas.create_text(
@@ -1809,11 +1963,6 @@ class App(tk.Tk):
             )
             return
 
-        series = [
-            ("methane_ppm", "Methane ppm", "#15803d"),
-            ("pressure_pa", "Pressure Pa", "#2563eb"),
-            ("humidity_rh", "Humidity %RH", "#d97706"),
-        ]
         legend_x = max(left + 120, right - 178)
         canvas.create_rectangle(
             legend_x - 8,

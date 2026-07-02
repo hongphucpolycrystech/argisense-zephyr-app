@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config ARGISENSE_ADS124S08
+	bool "ADS124S08 24-bit SPI ADC driver"
+	default y
+	depends on ADC
+	depends on SPI
+	depends on GPIO
+	depends on DT_HAS_ARGISENSE_ADS124S08_ENABLED
+	select ADC_CONFIGURABLE_INPUTS
+	help
+	  Enable the ADS124S08 SPI ADC driver used by the ArgiSense pH
+	  front-end. The driver provides a minimal Zephyr ADC API
+	  implementation plus helper calls for pH raw acquisition and PT1000
+	  measurements.

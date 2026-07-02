@@ -158,6 +158,14 @@
 };
 
 &uart4 {
+	/*
+	 * Firmware uses the valid STM32U575RGT6 UART4 pin pair PC10/PC11 for the
+	 * Dynament methane UART. The Sensor_Platform_V1 pH_V1_0 schematic review
+	 * shows METH_UART_TXD on PC8 and METH_UART_RXD on PC7, but those pins do
+	 * not have a UART TX/RX alternate function in the Zephyr STM32U575RGT6
+	 * pinctrl data. Route the methane UART to PC10/PC11, or another valid
+	 * UART pin pair, before relying on this DTS on hardware.
+	 */
 	pinctrl-0 = <&uart4_tx_pc10 &uart4_rx_pc11>;
 	pinctrl-names = "default";
 	current-speed = <38400>;
